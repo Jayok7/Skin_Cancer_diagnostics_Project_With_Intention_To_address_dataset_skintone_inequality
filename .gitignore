@@ -18,9 +18,11 @@ env/
 .ipynb_checkpoints/
 *.ipynb_checkpoints
 
-# IDE
+# IDE & Agent Config
 .idea/
 .vscode/
+.agent/
+.gemini/
 *.swp
 *.swo
 *~
@@ -54,3 +56,10 @@ logs/
 
 # Environment variables
 .env
+
+# CSF Documentation
+CSF_GPU_GUIDE.md
+CSF_QUICKSTART.md
+SSH_COMMANDS.md
+submit_job.sh
+submit_csf.sh
