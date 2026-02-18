@@ -171,7 +171,7 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
 
         optimizer.zero_grad()
 
-        with autocast(device_type="cuda", enabled=(device.type == "cuda")):
+        with autocast(enabled=(device.type == "cuda")):
             outputs = model(images)
             loss = criterion(outputs, labels)
 
@@ -203,7 +203,7 @@ def evaluate(model, loader, criterion, device):
         images = images.to(device)
         labels = labels.to(device)
 
-        with autocast(device_type="cuda", enabled=(device.type == "cuda")):
+        with autocast(enabled=(device.type == "cuda")):
             outputs = model(images)
             loss = criterion(outputs, labels)
 
@@ -313,7 +313,8 @@ def main():
     print(f"DEVICE: {device}")
     if device.type == "cuda":
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
-        print(f"  Memory: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB")
+        print(f"  Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+
     print(f"{'='*60}\n")
 
     # ------------------------------------------------------------------

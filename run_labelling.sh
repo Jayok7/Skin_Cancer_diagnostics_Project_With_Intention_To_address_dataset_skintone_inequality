@@ -1,12 +1,12 @@
- #!/bin/bash
+#!/bin/bash
 #SBATCH --job-name=fairface_label
+#SBATCH --partition=multicore
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
-#SBATCH --time=2:00:00
+#SBATCH --mem=12G
+#SBATCH --time=1:00:00
 #SBATCH --output=logs/labeling_%j.log
 #SBATCH --error=logs/labeling_%j.err
-#SBATCH --partition=short
 
 # Load modules
 module load apps/binapps/anaconda3/2021.11
@@ -16,7 +16,9 @@ ENV_PATH="/mnt/iusers01/fse-ugpgt01/eee01/m84149ji/.conda/envs/tf_gpu"
 export PATH="$ENV_PATH/bin:$PATH"
 
 # Run labeling script
-echo "Starting labeling with MSKCC-aligned centroids..."
+# Install missing OpenCV dependency (headless for server)
+pip install opencv-python-headless
+
 
 python compute_fairface_labels.py \
     --csv-dir datasets/ \

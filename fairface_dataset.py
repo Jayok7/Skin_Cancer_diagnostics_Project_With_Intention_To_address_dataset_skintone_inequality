@@ -176,12 +176,17 @@ class FairFaceDataset(Dataset):
         import numpy as np
 
         labels = self.df["skin_tone_class"].values
+        if self.num_classes == 3:
+            # Rebalance weights for 3 classes
+            # 0,1->0; 2,3->1; 4,5->2
+            labels = labels // 2
+
         unique = np.unique(labels)
         weights = compute_class_weight("balanced", classes=unique, y=labels)
 
         # Build a full weight vector even if some classes are missing
-        full_weights = np.ones(self.NUM_CLASSES, dtype=np.float32)
+        full_weights = np.ones(self.num_classes, dtype=np.float32)
         for cls, w in zip(unique, weights):
-            full_weights[cls] = w
+            full_weights[int(cls)] = w
 
         return torch.tensor(full_weights, dtype=torch.float32)
