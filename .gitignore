@@ -45,6 +45,7 @@ models/*.pth
 models/*.onnx
 *.weights
 outputs/*.keras
+outputs/*.pth
 
 # OS
 .DS_Store
