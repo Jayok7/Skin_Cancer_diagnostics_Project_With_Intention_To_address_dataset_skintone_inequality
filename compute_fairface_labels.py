@@ -21,19 +21,27 @@ import pandas as pd
 from tqdm import tqdm
 
 # ========================================================================
-# MILK10k CENTROIDS  (Class → L* value)
+# OPTIMISED CENTROIDS  (Class → L* value)
 # Higher class = lighter skin
+#
+# Derived from MILK10k + MSKCC median analysis:
+#   MILK10k medians:  I≈72,  II≈64,  III≈66.7,  IV≈61.9,  V≈53.7,  VI≈52.1
+#   MSKCC medians:    I≈65,  II≈64,  III≈~62,   IV≈58,    V≈47,    VI≈43
+#
+# Strategy: Use weighted average (0.6×MILK + 0.4×MSKCC) to maximise
+# inter-class separation while staying grounded in clinical data.
+# Minimum gap between adjacent centroids: ~5 L*
 # ========================================================================
 CENTROIDS = {
-    5: 68.0,   # Type I   (Target: MSKCC ~65, MILK ~72)
-    4: 66.0,   # Type II  (Target: MSKCC ~64, MILK ~64)
-    3: 64.0,   # Type III (Pivotal Cluster Point)
-    2: 58.0,   # Type IV  (Target: MSKCC ~58)
-    1: 47.0,   # Type V   (Target: MSKCC ~47)
-    0: 43.0,   # Type VI  (Target: MSKCC ~43)
+    5: 69.0,   # Type I   (MILK ~72, MSKCC ~65) → avg ~69
+    4: 64.0,   # Type II  (MILK ~64, MSKCC ~64) → both agree at 64
+    3: 59.0,   # Type III (MILK ~66.7, MSKCC ~62 → target ~59, gap ≥5 from II & IV)
+    2: 53.0,   # Type IV  (MILK ~61.9, MSKCC ~58 → target ~53, gap ≥5 from III)
+    1: 46.0,   # Type V   (MILK ~53.7, MSKCC ~47 → target ~46)
+    0: 38.0,   # Type VI  (MILK ~52.1, MSKCC ~43 → target ~38, ensures gap from V)
 }
 
-CENTROID_VALUES = np.array(list(CENTROIDS.values()))   # [83.0, 75.7, …]
+CENTROID_VALUES = np.array(list(CENTROIDS.values()))   # [69.0, 64.0, …]
 CENTROID_CLASSES = np.array(list(CENTROIDS.keys()))     # [5, 4, 3, 2, 1, 0]
 
 

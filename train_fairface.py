@@ -34,7 +34,7 @@ import seaborn as sns
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.cuda.amp import GradScaler, autocast
 from torchvision import models
 
@@ -88,14 +88,19 @@ class FocalLoss(nn.Module):
 
     Args:
         gamma: Focusing parameter (default: 2.0)
-        alpha: Balancing factor (default: 0.25)
-        weight: Per-class weights tensor (optional)
+        alpha: Per-class alpha tensor of shape (C,) or scalar float.
+               When a tensor, each class gets its own balancing factor
+               (higher = more weight for that class).
+        weight: Per-class weights tensor for cross-entropy (optional)
     """
 
-    def __init__(self, gamma: float = 2.0, alpha: float = 0.25, weight=None):
+    def __init__(self, gamma: float = 2.0, alpha=None, weight=None):
         super().__init__()
         self.gamma = gamma
-        self.alpha = alpha
+        # alpha can be a tensor (per-class) or scalar
+        if alpha is not None and not isinstance(alpha, torch.Tensor):
+            alpha = torch.tensor(alpha, dtype=torch.float32)
+        self.register_buffer("alpha", alpha)
         self.weight = weight
 
     def forward(self, logits, targets):
@@ -105,10 +110,20 @@ class FocalLoss(nn.Module):
             targets: (B,) integer class labels
         """
         ce_loss = nn.functional.cross_entropy(
-            logits, targets, weight=self.weight, reduction="none"
+            logits, targets, weight=self.weight, reduction="none",
+            label_smoothing=0.1,
         )
         pt = torch.exp(-ce_loss)  # p_t = probability of correct class
-        focal_weight = self.alpha * (1 - pt) ** self.gamma
+
+        # Per-class alpha: index into alpha tensor by target class
+        if self.alpha is not None and self.alpha.dim() > 0:
+            alpha_t = self.alpha[targets]  # (B,)
+        elif self.alpha is not None:
+            alpha_t = self.alpha  # scalar
+        else:
+            alpha_t = 1.0
+
+        focal_weight = alpha_t * (1 - pt) ** self.gamma
         return (focal_weight * ce_loss).mean()
 
 
@@ -332,8 +347,17 @@ def main():
         num_classes=args.num_classes,
     )
 
+    # --- WeightedRandomSampler for balanced training ---
+    sample_weights = train_ds.get_sample_weights()
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(train_ds),  # one full epoch worth of samples
+        replacement=True,           # required: minority classes redrawn
+    )
+    print(f"  ✓ WeightedRandomSampler active ({len(train_ds):,} samples/epoch)")
+
     train_loader = DataLoader(
-        train_ds, batch_size=args.batch_size, shuffle=True,
+        train_ds, batch_size=args.batch_size, sampler=sampler,
         num_workers=args.num_workers, pin_memory=True, drop_last=True,
     )
     val_loader = DataLoader(
@@ -351,12 +375,22 @@ def main():
     print(f"  Total parameters: {total_params:,}")
 
     # ------------------------------------------------------------------
-    # Class weights & loss
+    # Class weights & loss (per-class alpha for focal loss)
     # ------------------------------------------------------------------
     class_weights = train_ds.get_class_weights().to(device)
-    print(f"\n  Class weights: {class_weights.cpu().numpy().round(3)}")
+    print(f"\n  Class weights (CE): {class_weights.cpu().numpy().round(3)}")
 
-    criterion = FocalLoss(gamma=2.0, alpha=0.25, weight=class_weights)
+    # Per-class focal alpha: normalise class weights to [0.1, 0.9] range
+    # so minority classes get higher alpha (more focal attention)
+    alpha_raw = class_weights.cpu()
+    alpha_min, alpha_max = alpha_raw.min(), alpha_raw.max()
+    if alpha_max > alpha_min:
+        alpha_per_class = 0.1 + 0.8 * (alpha_raw - alpha_min) / (alpha_max - alpha_min)
+    else:
+        alpha_per_class = torch.full_like(alpha_raw, 0.25)
+    print(f"  Focal alpha:   {alpha_per_class.numpy().round(3)}")
+
+    criterion = FocalLoss(gamma=2.0, alpha=alpha_per_class.to(device), weight=class_weights)
 
     # ------------------------------------------------------------------
     # Mixed precision scaler
@@ -436,7 +470,7 @@ def main():
 
     history["stage_boundary"] = args.epochs_head
 
-    optimizer = optim.AdamW(model.parameters(), lr=5e-6, weight_decay=1e-5)
+    optimizer = optim.AdamW(model.parameters(), lr=1e-5, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer,
         T_0=10,         # First restart period
