@@ -69,8 +69,8 @@ def parse_args():
                    help="Image size in pixels (default: 380 for EfficientNet-B4)")
     p.add_argument("--num-workers", type=int, default=4,
                    help="DataLoader workers (default: 4)")
-    p.add_argument("--patience", type=int, default=15,
-                   help="Early stopping patience (default: 15)")
+    p.add_argument("--patience", type=int, default=10,
+                   help="Early stopping patience (default: 10)")
     p.add_argument("--num-classes", type=int, default=6, choices=[3, 6],
                    help="Number of skin tone classes (6 or 3)")
     return p.parse_args()
@@ -375,22 +375,14 @@ def main():
     print(f"  Total parameters: {total_params:,}")
 
     # ------------------------------------------------------------------
-    # Class weights & loss (per-class alpha for focal loss)
+    # Loss function
     # ------------------------------------------------------------------
-    class_weights = train_ds.get_class_weights().to(device)
-    print(f"\n  Class weights (CE): {class_weights.cpu().numpy().round(3)}")
-
-    # Per-class focal alpha: normalise class weights to [0.1, 0.9] range
-    # so minority classes get higher alpha (more focal attention)
-    alpha_raw = class_weights.cpu()
-    alpha_min, alpha_max = alpha_raw.min(), alpha_raw.max()
-    if alpha_max > alpha_min:
-        alpha_per_class = 0.1 + 0.8 * (alpha_raw - alpha_min) / (alpha_max - alpha_min)
-    else:
-        alpha_per_class = torch.full_like(alpha_raw, 0.25)
-    print(f"  Focal alpha:   {alpha_per_class.numpy().round(3)}")
-
-    criterion = FocalLoss(gamma=2.0, alpha=alpha_per_class.to(device), weight=class_weights)
+    # Use scalar alpha only — WeightedRandomSampler already handles
+    # class imbalance; per-class alpha caused double-correction and
+    # overfitting in v2.0.
+    criterion = FocalLoss(gamma=2.0, alpha=0.25)
+    print(f"\n  Loss: FocalLoss(gamma=2.0, alpha=0.25, label_smoothing=0.1)")
+    print(f"  Note: WeightedRandomSampler handles class balance; no per-class alpha needed")
 
     # ------------------------------------------------------------------
     # Mixed precision scaler
@@ -470,7 +462,7 @@ def main():
 
     history["stage_boundary"] = args.epochs_head
 
-    optimizer = optim.AdamW(model.parameters(), lr=1e-5, weight_decay=1e-5)
+    optimizer = optim.AdamW(model.parameters(), lr=5e-6, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer,
         T_0=10,         # First restart period

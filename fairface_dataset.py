@@ -56,32 +56,32 @@ def get_train_transforms(image_size: int = 380):
 
 def get_minority_train_transforms(image_size: int = 380):
     """
-    Stronger augmentations for minority classes (e.g. Type II, III).
+    Mildly stronger augmentations for minority classes (e.g. Type II, III).
 
-    Adds RandomRotation, RandomPerspective, and heavier ColorJitter
-    to maximise visual diversity when these samples are oversampled.
+    Only slightly more aggressive ColorJitter and RandomErasing compared
+    to the standard transforms. Avoids geometric distortions (rotation,
+    perspective) which warp face shapes unrealistically and hurt
+    generalisation when oversampled by WeightedRandomSampler.
     """
     return transforms.Compose([
-        transforms.Resize(image_size + 48),          # larger over-size for more crop variation
+        transforms.Resize(image_size + 40),          # slightly larger crop pool
         transforms.RandomCrop(image_size),
         transforms.RandomHorizontalFlip(),
         transforms.RandomVerticalFlip(),
-        transforms.RandomRotation(degrees=15),
-        transforms.RandomPerspective(distortion_scale=0.15, p=0.3),
         transforms.ColorJitter(
-            brightness=0.4,
-            contrast=0.4,
-            saturation=0.4,
-            hue=0.10,
+            brightness=0.35,
+            contrast=0.35,
+            saturation=0.35,
+            hue=0.09,
         ),
         transforms.RandomGrayscale(p=0.03),
-        transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 2.5)),
+        transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0)),
         transforms.ToTensor(),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225],
         ),
-        transforms.RandomErasing(p=0.25, scale=(0.02, 0.20)),
+        transforms.RandomErasing(p=0.20, scale=(0.02, 0.15)),
     ])
 
 
