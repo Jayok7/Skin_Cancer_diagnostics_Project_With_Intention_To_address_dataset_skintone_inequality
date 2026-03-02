@@ -63,68 +63,82 @@ def parse_args():
                    help="Batch size (default: 32)")
     p.add_argument("--epochs-head", type=int, default=10,
                    help="Epochs for head-only training (stage 1)")
-    p.add_argument("--epochs-finetune", type=int, default=40,
+    p.add_argument("--epochs-finetune", type=int, default=60,
                    help="Epochs for full fine-tuning (stage 2)")
     p.add_argument("--image-size", type=int, default=380,
                    help="Image size in pixels (default: 380 for EfficientNet-B4)")
     p.add_argument("--num-workers", type=int, default=4,
                    help="DataLoader workers (default: 4)")
-    p.add_argument("--patience", type=int, default=10,
-                   help="Early stopping patience (default: 10)")
+    p.add_argument("--patience", type=int, default=20,
+                   help="Early stopping patience (default: 20)")
     p.add_argument("--num-classes", type=int, default=6, choices=[3, 6],
                    help="Number of skin tone classes (6 or 3)")
     return p.parse_args()
 
 
 # ========================================================================
-# FOCAL LOSS  (PyTorch port of train_fitzpatrick.py focal_loss)
+# ORDINAL CROSS-ENTROPY LOSS
 # ========================================================================
 
-class FocalLoss(nn.Module):
+class OrdinalCrossEntropy(nn.Module):
     """
-    Multi-class focal loss as described in Lin et al. (2017).
-    Reduces the relative loss for well-classified examples and
-    focuses training on hard, misclassified examples.
+    Cross-entropy with soft ordinal labels.
+
+    Instead of hard one-hot targets, generates a Gaussian distribution
+    centred on the true class. Adjacent classes receive partial credit,
+    so the model is penalised much less for near-miss predictions
+    (e.g. Type III → Type IV) than for far-off errors (Type III → Type I).
 
     Args:
-        gamma: Focusing parameter (default: 2.0)
-        alpha: Per-class alpha tensor of shape (C,) or scalar float.
-               When a tensor, each class gets its own balancing factor
-               (higher = more weight for that class).
-        weight: Per-class weights tensor for cross-entropy (optional)
+        num_classes: Number of ordinal classes
+        sigma:       Gaussian spread (default 1.0). Higher = softer labels.
+                     At sigma=1.0, adjacent classes get ~15% of peak weight.
+        gamma:       Focal focusing parameter (default 2.0). Set to 0 to disable.
     """
 
-    def __init__(self, gamma: float = 2.0, alpha=None, weight=None):
+    def __init__(self, num_classes: int = 6, sigma: float = 1.0, gamma: float = 2.0):
         super().__init__()
+        self.num_classes = num_classes
+        self.sigma = sigma
         self.gamma = gamma
-        # alpha can be a tensor (per-class) or scalar
-        if alpha is not None and not isinstance(alpha, torch.Tensor):
-            alpha = torch.tensor(alpha, dtype=torch.float32)
-        self.register_buffer("alpha", alpha)
-        self.weight = weight
+
+        # Pre-compute the soft label matrix (C x C)
+        # soft_labels[k] = normalised Gaussian centred on class k
+        indices = torch.arange(num_classes, dtype=torch.float32)
+        soft = torch.zeros(num_classes, num_classes)
+        for k in range(num_classes):
+            dist = (indices - k) ** 2
+            weights = torch.exp(-dist / (2 * sigma ** 2))
+            soft[k] = weights / weights.sum()  # normalise to valid distribution
+        self.register_buffer("soft_labels", soft)
 
     def forward(self, logits, targets):
         """
         Args:
-            logits: (B, C) raw model outputs (before softmax)
+            logits:  (B, C) raw model outputs
             targets: (B,) integer class labels
         """
-        ce_loss = nn.functional.cross_entropy(
-            logits, targets, weight=self.weight, reduction="none",
-            label_smoothing=0.1,
-        )
-        pt = torch.exp(-ce_loss)  # p_t = probability of correct class
+        # Look up soft target distribution for each sample
+        soft_targets = self.soft_labels[targets]  # (B, C)
 
-        # Per-class alpha: index into alpha tensor by target class
-        if self.alpha is not None and self.alpha.dim() > 0:
-            alpha_t = self.alpha[targets]  # (B,)
-        elif self.alpha is not None:
-            alpha_t = self.alpha  # scalar
-        else:
-            alpha_t = 1.0
+        # Cast to float32 and clamp to avoid NaN from float16 overflow
+        # under autocast. The model may produce inf logits in float16
+        # which stay inf even after float32 promotion.
+        logits = logits.float().clamp(-100, 100)
+        log_probs = nn.functional.log_softmax(logits, dim=1)
 
-        focal_weight = alpha_t * (1 - pt) ** self.gamma
-        return (focal_weight * ce_loss).mean()
+        # KL-divergence style loss: -sum(soft_target * log_prob)
+        per_sample_loss = -(soft_targets * log_probs).sum(dim=1)  # (B,)
+
+        # Optional focal weighting
+        if self.gamma > 0:
+            probs = torch.exp(log_probs)
+            # p_t = probability assigned to the TRUE class
+            pt = probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+            focal_weight = (1 - pt) ** self.gamma
+            per_sample_loss = focal_weight * per_sample_loss
+
+        return per_sample_loss.mean()
 
 
 # ========================================================================
@@ -163,18 +177,73 @@ def freeze_backbone(model):
             param.requires_grad = False
 
 
-def unfreeze_backbone(model):
-    """Unfreeze all layers for fine-tuning."""
+def partial_unfreeze_backbone(model, unfreeze_from: int = 6):
+    """
+    Only unfreeze the last N blocks of EfficientNet-B4 + classifier.
+
+    EfficientNet-B4 has blocks 0-7 in model.features.
+    By default, unfreezes blocks 6-7 (~5M params) while keeping
+    blocks 0-5 frozen (preserves low-level features for cross-domain
+    generalization).
+    """
+    # First freeze everything
     for param in model.parameters():
+        param.requires_grad = False
+
+    # Unfreeze classifier head
+    for param in model.classifier.parameters():
         param.requires_grad = True
+
+    # Unfreeze last N feature blocks
+    for i, block in enumerate(model.features):
+        if i >= unfreeze_from:
+            for param in block.parameters():
+                param.requires_grad = True
+
+
+# ========================================================================
+# MIXUP AUGMENTATION
+# ========================================================================
+
+def mixup_data(images, labels, alpha=0.4):
+    """
+    Apply MixUp augmentation: linearly interpolate pairs of images.
+
+    For ordinal classification, MixUp is particularly natural —
+    mixing a Type III and Type V image creates a "Type IV-ish"
+    training signal that helps the model learn continuous skin
+    tone transitions.
+
+    Args:
+        images: (B, C, H, W) batch of images
+        labels: (B,) integer class labels
+        alpha:  Beta distribution parameter (higher = more mixing)
+
+    Returns:
+        mixed_images, labels_a, labels_b, lam
+    """
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1.0
+
+    batch_size = images.size(0)
+    index = torch.randperm(batch_size, device=images.device)
+
+    mixed_images = lam * images + (1 - lam) * images[index]
+    labels_a = labels
+    labels_b = labels[index]
+
+    return mixed_images, labels_a, labels_b, lam
 
 
 # ========================================================================
 # TRAINING LOOP
 # ========================================================================
 
-def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
-    """Run one training epoch with mixed-precision support."""
+def train_one_epoch(model, loader, criterion, optimizer, scaler, device,
+                    mixup_alpha=0.0):
+    """Run one training epoch with mixed-precision and optional MixUp."""
     model.train()
     running_loss = 0.0
     correct = 0
@@ -184,11 +253,22 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
         images = images.to(device)
         labels = labels.to(device)
 
+        # Apply MixUp if enabled
+        if mixup_alpha > 0:
+            images, labels_a, labels_b, lam = mixup_data(
+                images, labels, alpha=mixup_alpha
+            )
+
         optimizer.zero_grad()
 
         with autocast(enabled=(device.type == "cuda")):
             outputs = model(images)
-            loss = criterion(outputs, labels)
+            if mixup_alpha > 0:
+                # Blend loss for both mixed targets
+                loss = lam * criterion(outputs, labels_a) + \
+                       (1 - lam) * criterion(outputs, labels_b)
+            else:
+                loss = criterion(outputs, labels)
 
         scaler.scale(loss).backward()
         scaler.step(optimizer)
@@ -196,7 +276,12 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
 
         running_loss += loss.item() * images.size(0)
         _, preds = outputs.max(1)
-        correct += preds.eq(labels).sum().item()
+        if mixup_alpha > 0:
+            # Count correct against the dominant label
+            correct += (lam * preds.eq(labels_a).sum().item() +
+                        (1 - lam) * preds.eq(labels_b).sum().item())
+        else:
+            correct += preds.eq(labels).sum().item()
         total += labels.size(0)
 
     epoch_loss = running_loss / total
@@ -218,9 +303,11 @@ def evaluate(model, loader, criterion, device):
         images = images.to(device)
         labels = labels.to(device)
 
-        with autocast(enabled=(device.type == "cuda")):
-            outputs = model(images)
-            loss = criterion(outputs, labels)
+        # Run eval entirely in float32 — no training benefit from
+        # mixed-precision here, and float16 can overflow to inf/NaN
+        # on rare batches (logits > 65504 → inf → NaN loss).
+        outputs = model(images).float()
+        loss = criterion(outputs, labels)
 
         running_loss += loss.item() * images.size(0)
         _, preds = outputs.max(1)
@@ -312,6 +399,141 @@ def print_evaluation_report(y_true, y_pred, class_names):
     print(f"{'='*60}")
 
 
+@torch.no_grad()
+def extract_embeddings(model, loader, device):
+    """
+    Extract penultimate-layer embeddings (1792-dim for EfficientNet-B4).
+
+    Hooks into the adaptive average pooling layer to capture the
+    feature vector before the classifier head.
+
+    Returns:
+        embeddings: (N, 1792) numpy array
+        labels:     (N,) numpy array
+    """
+    model.eval()
+    all_embeddings = []
+    all_labels = []
+
+    # Hook into the avgpool layer to capture features
+    features = {}
+    def hook_fn(module, input, output):
+        features["embedding"] = output.squeeze()  # (B, 1792)
+
+    # EfficientNet-B4: model.avgpool is the global average pooling
+    handle = model.avgpool.register_forward_hook(hook_fn)
+
+    for images, labels in loader:
+        images = images.to(device)
+        with autocast(enabled=(device.type == "cuda")):
+            _ = model(images)
+
+        emb = features["embedding"].cpu().numpy()
+        if emb.ndim == 1:  # single sample edge case
+            emb = emb[np.newaxis, :]
+        all_embeddings.append(emb)
+        all_labels.extend(labels.numpy())
+
+    handle.remove()
+
+    return np.vstack(all_embeddings), np.array(all_labels)
+
+
+def plot_latent_space(embeddings, labels, class_names, output_path,
+                      max_samples=3000):
+    """
+    Reduce embeddings to 2D with UMAP and plot colour-coded clusters.
+
+    Falls back to t-SNE if umap-learn is not installed.
+    Uses a perceptually meaningful skin-tone colour palette.
+    """
+    print("\n--- Generating latent space visualisation ---")
+
+    try:
+        # Save raw embeddings for reuse
+        npz_path = output_path.replace(".png", "_embeddings.npz")
+        np.savez(npz_path, embeddings=embeddings, labels=labels,
+                 class_names=np.array(class_names))
+        print(f"  ✓ Raw embeddings saved to {npz_path}")
+
+        # Subsample for speed and memory
+        if len(labels) > max_samples:
+            print(f"  Subsampling {len(labels):,} → {max_samples:,} (stratified)")
+            rng = np.random.RandomState(42)
+            indices = []
+            per_class = max_samples // len(class_names)
+            for c in range(len(class_names)):
+                cls_idx = np.where(labels == c)[0]
+                n = min(per_class, len(cls_idx))
+                indices.extend(rng.choice(cls_idx, n, replace=False))
+            indices = np.array(indices)
+            rng.shuffle(indices)
+            embeddings = embeddings[indices]
+            labels = labels[indices]
+
+        # PCA pre-reduction for memory efficiency
+        from sklearn.decomposition import PCA
+        embeddings = embeddings.astype(np.float32)
+        print(f"  PCA: {embeddings.shape[1]} → 50 dims")
+        embeddings = PCA(n_components=50, random_state=42).fit_transform(embeddings)
+
+        # Try UMAP first, fall back to t-SNE
+        try:
+            from umap import UMAP
+            reducer = UMAP(n_components=2, n_neighbors=30, min_dist=0.3,
+                           metric="cosine", random_state=42, low_memory=True)
+            method_name = "UMAP"
+        except ImportError:
+            from sklearn.manifold import TSNE
+            reducer = TSNE(n_components=2, perplexity=30, random_state=42,
+                           n_iter=1000)
+            method_name = "t-SNE"
+
+        print(f"  Running {method_name} on {embeddings.shape[0]:,} samples...")
+        coords = reducer.fit_transform(embeddings)
+
+        # Skin-tone colour palette (dark → light)
+        skin_colors = [
+            "#3B2219",  # Type VI (darkest)
+            "#6B4226",  # Type V
+            "#A67B5B",  # Type IV
+            "#C8A882",  # Type III
+            "#E8C9A0",  # Type II
+            "#F5DEB3",  # Type I (lightest)
+        ]
+        colors_used = skin_colors[:len(class_names)]
+
+        fig, ax = plt.subplots(figsize=(10, 8))
+        for cls_idx in range(len(class_names)):
+            mask = labels == cls_idx
+            if not mask.any():
+                continue
+            ax.scatter(
+                coords[mask, 0], coords[mask, 1],
+                c=colors_used[cls_idx],
+                label=class_names[cls_idx],
+                alpha=0.5, s=12, edgecolors="none",
+            )
+
+        ax.set_title(f"Latent Space ({method_name}) — FairFace Skin Tone Classifier",
+                     fontsize=14, fontweight="bold")
+        ax.set_xlabel(f"{method_name} 1")
+        ax.set_ylabel(f"{method_name} 2")
+        ax.legend(markerscale=4, fontsize=10, loc="best",
+                  framealpha=0.9, edgecolor="gray")
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.close()
+        print(f"  ✓ Latent space plot saved to {output_path}")
+
+    except Exception as e:
+        print(f"  ⚠ Latent space plot failed: {e}")
+        print(f"    (Raw embeddings are still saved as .npz)")
+
+
 # ========================================================================
 # MAIN
 # ========================================================================
@@ -375,14 +597,15 @@ def main():
     print(f"  Total parameters: {total_params:,}")
 
     # ------------------------------------------------------------------
-    # Loss function
+    # Loss function — Ordinal Cross-Entropy
     # ------------------------------------------------------------------
-    # Use scalar alpha only — WeightedRandomSampler already handles
-    # class imbalance; per-class alpha caused double-correction and
-    # overfitting in v2.0.
-    criterion = FocalLoss(gamma=2.0, alpha=0.25)
-    print(f"\n  Loss: FocalLoss(gamma=2.0, alpha=0.25, label_smoothing=0.1)")
-    print(f"  Note: WeightedRandomSampler handles class balance; no per-class alpha needed")
+    # Soft ordinal labels give partial credit to adjacent classes,
+    # preventing collapse of middle skin types (II, III, IV).
+    criterion = OrdinalCrossEntropy(
+        num_classes=args.num_classes, sigma=1.5, gamma=2.0,
+    ).to(device)
+    print(f"\n  Loss: OrdinalCrossEntropy(sigma=1.5, gamma=2.0)")
+    print(f"  Soft labels give adjacent classes ~25% credit (wider Gaussian spread)")
 
     # ------------------------------------------------------------------
     # Mixed precision scaler
@@ -397,6 +620,7 @@ def main():
         "val_loss": [], "val_acc": [],
     }
 
+    best_val_loss = float("inf")
     best_val_acc = 0.0
     epochs_no_improve = 0
 
@@ -456,18 +680,20 @@ def main():
     print(f"STAGE 2: Full Fine-Tuning ({args.epochs_finetune} epochs)")
     print(f"{'='*60}")
 
-    unfreeze_backbone(model)
+    partial_unfreeze_backbone(model, unfreeze_from=4)
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"  Trainable parameters: {trainable:,}")
+    print(f"  Trainable parameters: {trainable:,}  (last 4 blocks + head)")
 
     history["stage_boundary"] = args.epochs_head
 
-    optimizer = optim.AdamW(model.parameters(), lr=5e-6, weight_decay=1e-5)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    optimizer = optim.AdamW(model.parameters(), lr=1.2e-5, weight_decay=1e-5)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
-        T_0=10,         # First restart period
-        T_mult=2,       # Double period after each restart
-        eta_min=1e-7,
+        mode="min",       # reduce LR when val_loss stops decreasing
+        factor=0.5,       # halve LR on plateau
+        patience=8,       # wait 8 epochs before reducing
+        min_lr=1e-7,
+        verbose=True,
     )
 
     for epoch in range(args.epochs_finetune):
@@ -475,10 +701,11 @@ def main():
         t0 = time.time()
 
         train_loss, train_acc = train_one_epoch(
-            model, train_loader, criterion, optimizer, scaler, device
+            model, train_loader, criterion, optimizer, scaler, device,
+            mixup_alpha=0.2,
         )
         val_loss, val_acc, _, _ = evaluate(model, val_loader, criterion, device)
-        scheduler.step()
+        scheduler.step(val_loss)  # ReduceLROnPlateau uses val_loss
         dt = time.time() - t0
 
         history["train_loss"].append(train_loss)
@@ -486,9 +713,11 @@ def main():
         history["val_loss"].append(val_loss)
         history["val_acc"].append(val_acc)
 
+        # Track best by val_acc (ordinal loss can plateau while acc still improves)
         improved = ""
         if val_acc > best_val_acc:
             best_val_acc = val_acc
+            best_val_loss = val_loss
             torch.save(model.state_dict(),
                        os.path.join(args.output_dir, "best_finetuned_model.pth"))
             improved = " ★ saved"
@@ -550,6 +779,15 @@ def main():
     plot_training_history(
         history,
         os.path.join(args.output_dir, "fairface_training_curves.png"),
+    )
+
+    # Latent space visualisation
+    print("\n--- Extracting validation embeddings ---")
+    embeddings, embed_labels = extract_embeddings(model, val_loader, device)
+    print(f"  Embeddings shape: {embeddings.shape}")
+    plot_latent_space(
+        embeddings, embed_labels, class_names,
+        os.path.join(args.output_dir, "fairface_latent_space.png"),
     )
 
     print(f"\n{'='*60}")
