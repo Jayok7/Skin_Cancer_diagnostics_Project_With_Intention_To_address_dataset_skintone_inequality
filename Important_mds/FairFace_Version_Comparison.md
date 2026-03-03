@@ -16,7 +16,8 @@
 | **2.2** | 3-way mode support, tweaked centroids          |     ~66%     | ✅ Type III 9%, Type II 19% |   Medium   |
 | **2.3** | Optimised centroids, ordinal smoothing refined |     ~69%     | ✅ Type III 4%, Type II 30% |    High    |
 | **2.4** | Partial backbone freeze, MixUp, ↑weight decay |     ~63%     | ⚠️ Type III 4%, Type II 9% | Underfitting |
-| **2.5** | ↑backbone capacity, wider sigma, ↓MixUp, ↓WD |   Pending   |           Pending           | Expected fix |
+| **2.5** | ↑backbone capacity, wider sigma, ↓MixUp, ↓WD |     ~67%     | ❌ Type III 1%, Type II 1% | Improved |
+| **2.6** | Class-weighted loss, tight sigma, ↑gamma, no MixUp | Pending |           Pending           | Expected fix |
 
 ---
 

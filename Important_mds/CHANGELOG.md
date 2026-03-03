@@ -4,7 +4,25 @@ Version history for the 6-way Fitzpatrick skin tone classifier trained on FairFa
 
 ---
 
-## v2.5 *(in progress)*
+## v2.6 *(in progress)*
+**Focus:** Break the Type IV attractor with class-weighted loss
+
+### Diagnosis
+v2.5's wider sigma (1.5) backfired — by giving 25% credit to adjacent classes, the model hedged harder into Type IV (82% of Type III swallowed, up from 69%). The loss was essentially rewarding the model for predicting Type IV on Type III samples.
+
+### Changes
+- **Class-weighted loss** — inverse-frequency weights amplify loss for minority classes (Type II ×2.38, Type III ×1.67)
+- **Tight sigma** `0.7` (was 1.5) — only ~7% credit for adjacent classes → model must predict exact class
+- **Stronger focal gamma** `3.0` (was 2.0) — more aggressively down-weight easy extremes (VI, I)
+- **MixUp disabled** — `alpha=0.0` (was 0.2) — MixUp literally creates Type IV-like training signals
+
+### Files Modified
+- `train_fairface.py` — `OrdinalCrossEntropy` gains `class_weights` param; sigma, gamma, mixup_alpha changed
+- `submit_csf.sh` — output dir `FairFace-Model-2.6`
+
+---
+
+## v2.5
 **Focus:** Fix Type II/III collapse by reversing underfitting from v2.4
 
 ### Diagnosis
@@ -16,6 +34,16 @@ v2.4's partial freeze was too aggressive — train acc (47%) fell *below* val ac
 - **Reduced MixUp** — `alpha=0.2` (was 0.4) → less blurring of ambiguous middle-class boundaries
 - **Lower weight decay** — `1e-5` (was 5e-5) → let the model learn more (underfitting, not overfitting)
 - **Higher fine-tune LR** — `1.2e-5` (was 8e-6) → faster convergence with more trainable params
+
+### Results
+| Metric | Value |
+|--------|-------|
+| Macro Accuracy | **0.6730** (up from 0.6331) |
+| Macro F1 | 0.46 |
+| Type III Recall | 1% (down from 3.8%) |
+| Type II Recall | 1% (down from 8.7%) |
+
+**Observations:** Extremes improved strongly (Type VI 92%, V 72%, I 87%) and macro accuracy rose to 67%. But wider sigma made Type IV attractor worse — 82% of Type III and 68% of Type II swallowed by Type IV. Backbone unfreeze and LR changes were beneficial; sigma increase was harmful.
 
 ### Files Modified
 - `train_fairface.py` — sigma, unfreeze_from, lr, weight_decay, mixup_alpha

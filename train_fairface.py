@@ -82,7 +82,7 @@ def parse_args():
 
 class OrdinalCrossEntropy(nn.Module):
     """
-    Cross-entropy with soft ordinal labels.
+    Cross-entropy with soft ordinal labels and per-class weighting.
 
     Instead of hard one-hot targets, generates a Gaussian distribution
     centred on the true class. Adjacent classes receive partial credit,
@@ -90,13 +90,17 @@ class OrdinalCrossEntropy(nn.Module):
     (e.g. Type III → Type IV) than for far-off errors (Type III → Type I).
 
     Args:
-        num_classes: Number of ordinal classes
-        sigma:       Gaussian spread (default 1.0). Higher = softer labels.
-                     At sigma=1.0, adjacent classes get ~15% of peak weight.
-        gamma:       Focal focusing parameter (default 2.0). Set to 0 to disable.
+        num_classes:   Number of ordinal classes
+        sigma:         Gaussian spread. Lower = stricter (less credit for near-misses).
+                       At sigma=0.7, adjacent classes get ~7% of peak weight.
+        gamma:         Focal focusing parameter. Higher = more focus on hard samples.
+        class_weights: Optional (C,) tensor of per-class loss multipliers.
+                       Use inverse-frequency weights to penalise minority-class
+                       errors more heavily (breaks dominant-class attractors).
     """
 
-    def __init__(self, num_classes: int = 6, sigma: float = 1.0, gamma: float = 2.0):
+    def __init__(self, num_classes: int = 6, sigma: float = 0.7, gamma: float = 3.0,
+                 class_weights: torch.Tensor = None):
         super().__init__()
         self.num_classes = num_classes
         self.sigma = sigma
@@ -111,6 +115,12 @@ class OrdinalCrossEntropy(nn.Module):
             weights = torch.exp(-dist / (2 * sigma ** 2))
             soft[k] = weights / weights.sum()  # normalise to valid distribution
         self.register_buffer("soft_labels", soft)
+
+        # Per-class loss weights (default: uniform)
+        if class_weights is not None:
+            self.register_buffer("class_weights", class_weights.float())
+        else:
+            self.register_buffer("class_weights", torch.ones(num_classes))
 
     def forward(self, logits, targets):
         """
@@ -129,6 +139,10 @@ class OrdinalCrossEntropy(nn.Module):
 
         # KL-divergence style loss: -sum(soft_target * log_prob)
         per_sample_loss = -(soft_targets * log_probs).sum(dim=1)  # (B,)
+
+        # Per-class weighting: amplify loss for minority classes
+        sample_weights = self.class_weights[targets]  # (B,)
+        per_sample_loss = per_sample_loss * sample_weights
 
         # Optional focal weighting
         if self.gamma > 0:
@@ -597,15 +611,20 @@ def main():
     print(f"  Total parameters: {total_params:,}")
 
     # ------------------------------------------------------------------
-    # Loss function — Ordinal Cross-Entropy
+    # Loss function — Ordinal Cross-Entropy with class weights
     # ------------------------------------------------------------------
-    # Soft ordinal labels give partial credit to adjacent classes,
-    # preventing collapse of middle skin types (II, III, IV).
+    # Tight sigma (0.7) = strict predictions, less hedging into Type IV.
+    # Class weights amplify loss for minority types (II, III).
+    # High focal gamma (3.0) = ignore easy extremes, focus on hard middle.
+    class_weights = train_ds.get_class_weights()
+    print(f"\n  Class weights: {class_weights.numpy().round(2)}")
     criterion = OrdinalCrossEntropy(
-        num_classes=args.num_classes, sigma=1.5, gamma=2.0,
+        num_classes=args.num_classes, sigma=0.7, gamma=3.0,
+        class_weights=class_weights,
     ).to(device)
-    print(f"\n  Loss: OrdinalCrossEntropy(sigma=1.5, gamma=2.0)")
-    print(f"  Soft labels give adjacent classes ~25% credit (wider Gaussian spread)")
+    print(f"  Loss: OrdinalCrossEntropy(sigma=0.7, gamma=3.0, weighted)")
+    print(f"  Soft labels give adjacent classes ~7% credit (tight Gaussian)")
+    print(f"  Minority classes (II, III) get higher loss multiplier")
 
     # ------------------------------------------------------------------
     # Mixed precision scaler
@@ -702,7 +721,7 @@ def main():
 
         train_loss, train_acc = train_one_epoch(
             model, train_loader, criterion, optimizer, scaler, device,
-            mixup_alpha=0.2,
+            mixup_alpha=0.0,  # disabled — MixUp creates Type IV-like signals
         )
         val_loss, val_acc, _, _ = evaluate(model, val_loader, criterion, device)
         scheduler.step(val_loss)  # ReduceLROnPlateau uses val_loss
