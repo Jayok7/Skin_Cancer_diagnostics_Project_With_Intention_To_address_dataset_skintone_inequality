@@ -123,7 +123,7 @@ class FairFaceDataset(Dataset):
     """
 
     # Human-readable class names for plotting / evaluation
-    CLASS_NAMES = [
+    FITZPATRICK_6_NAMES = [
         "Type VI (darkest)",   # class 0
         "Type V",              # class 1
         "Type IV",             # class 2
@@ -132,7 +132,26 @@ class FairFaceDataset(Dataset):
         "Type I (lightest)",   # class 5
     ]
 
-    NUM_CLASSES = 6
+    MST10_NAMES = [
+        "MST 10 (deepest)",    # class 0
+        "MST 9",               # class 1
+        "MST 8",               # class 2
+        "MST 7",               # class 3
+        "MST 6",               # class 4
+        "MST 5",               # class 5
+        "MST 4",               # class 6
+        "MST 3",               # class 7
+        "MST 2",               # class 8
+        "MST 1 (lightest)",    # class 9
+    ]
+
+    MST5_NAMES = [
+        "Very Dark (MST 9-10)",    # class 0
+        "Dark (MST 7-8)",          # class 1
+        "Medium (MST 5-6)",        # class 2
+        "Light (MST 3-4)",         # class 3
+        "Very Light (MST 1-2)",    # class 4
+    ]
 
     def __init__(
         self,
@@ -141,8 +160,9 @@ class FairFaceDataset(Dataset):
         split: str = "all",
         transform=None,
         image_size: int = 380,
-        num_classes: int = 6,
+        num_classes: int = 10,
         minority_threshold: float = 0.10,
+        max_samples_per_class: int = 0,
     ):
         self.image_root = image_root
         self.df = pd.read_csv(csv_path)
@@ -161,11 +181,60 @@ class FairFaceDataset(Dataset):
                 f"Check that --image-root points to the FairFace image directory."
             )
 
-        # Compute final labels for minority detection
-        raw_labels = self.df["skin_tone_class"].values.copy()
-        if self.num_classes == 3:
-            raw_labels = raw_labels // 2
-        self._labels = raw_labels
+        # ---------------------------------------------------------------
+        # Determine label column and class names based on num_classes
+        # and what columns are available in the CSV.
+        # ---------------------------------------------------------------
+        has_mst = "mst10_class" in self.df.columns
+        has_fitz = "skin_tone_class" in self.df.columns
+
+        if num_classes == 10:
+            # MST-10 mode
+            assert has_mst, "CSV must have 'mst10_class' column for 10-class mode. Run compute_mst_labels.py first."
+            self._labels = self.df["mst10_class"].values.copy()
+            self.class_names = self.MST10_NAMES
+
+        elif num_classes == 5:
+            # MST-5 mode (grouped pairs)
+            assert has_mst, "CSV must have 'mst5_class' column for 5-class mode. Run compute_mst_labels.py first."
+            self._labels = self.df["mst5_class"].values.copy()
+            self.class_names = self.MST5_NAMES
+
+        elif num_classes == 6:
+            # Legacy Fitzpatrick 6-way
+            assert has_fitz, "CSV must have 'skin_tone_class' column for 6-class mode."
+            self._labels = self.df["skin_tone_class"].values.copy()
+            self.class_names = self.FITZPATRICK_6_NAMES
+
+        elif num_classes == 3:
+            # Legacy Fitzpatrick 3-way
+            assert has_fitz, "CSV must have 'skin_tone_class' column for 3-class mode."
+            self._labels = self.df["skin_tone_class"].values.copy() // 2
+            self.class_names = ["Dark", "Medium", "Light"]
+
+        else:
+            raise ValueError(f"num_classes must be 3, 5, 6, or 10 — got {num_classes}")
+
+        # ---------------------------------------------------------------
+        # Undersample majority classes (if cap is set)
+        # ---------------------------------------------------------------
+        if max_samples_per_class > 0 and split == "train":
+            keep_mask = np.ones(len(self._labels), dtype=bool)
+            rng = np.random.default_rng(42)  # reproducible
+            for cls_id in range(self.num_classes):
+                cls_indices = np.where(self._labels == cls_id)[0]
+                if len(cls_indices) > max_samples_per_class:
+                    drop = rng.choice(
+                        cls_indices,
+                        size=len(cls_indices) - max_samples_per_class,
+                        replace=False,
+                    )
+                    keep_mask[drop] = False
+            n_before = len(self.df)
+            self.df = self.df[keep_mask].reset_index(drop=True)
+            self._labels = self._labels[keep_mask]
+            print(f"  ⚖ Undersampled: {n_before:,} → {len(self.df):,} " +
+                  f"(cap={max_samples_per_class:,}/class)")
 
         # Identify minority classes (below threshold fraction)
         counts = np.bincount(self._labels, minlength=self.num_classes)
@@ -178,19 +247,13 @@ class FairFaceDataset(Dataset):
         # Assign transforms — class-aware for training split
         if transform is not None:
             self.transform = transform
-            self._minority_transform = transform  # no special treatment if user provides custom
+            self._minority_transform = transform
         elif split == "train":
             self.transform = get_train_transforms(image_size)
             self._minority_transform = get_minority_train_transforms(image_size)
         else:
             self.transform = get_val_transforms(image_size)
             self._minority_transform = self.transform
-
-        # Update class names if using 3-way mode
-        if self.num_classes == 3:
-            self.class_names = ["Dark", "Medium", "Light"]
-        else:
-            self.class_names = self.CLASS_NAMES
 
         # Log info
         minority_str = ", ".join(

@@ -52,9 +52,9 @@ from fairface_dataset import FairFaceDataset
 # ========================================================================
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Train FairFace Skin Tone Classifier")
+    p = argparse.ArgumentParser(description="Train FairFace Skin Tone Classifier (MST or Fitzpatrick)")
     p.add_argument("--data-csv", type=str, required=True,
-                   help="Path to fairface_lstar_labels.csv")
+                   help="Path to label CSV (fairface_mst_labels.csv or fairface_lstar_labels.csv)")
     p.add_argument("--image-root", type=str, required=True,
                    help="Root dir of FairFace images")
     p.add_argument("--output-dir", type=str, default="./outputs/fairface",
@@ -71,8 +71,10 @@ def parse_args():
                    help="DataLoader workers (default: 4)")
     p.add_argument("--patience", type=int, default=20,
                    help="Early stopping patience (default: 20)")
-    p.add_argument("--num-classes", type=int, default=6, choices=[3, 6],
-                   help="Number of skin tone classes (6 or 3)")
+    p.add_argument("--num-classes", type=int, default=5, choices=[3, 5, 6, 10],
+                   help="Number of skin tone classes: 5=MST-5, 10=MST-10, 6=Fitzpatrick-6, 3=Fitzpatrick-3 (default: 5)")
+    p.add_argument("--max-samples-per-class", type=int, default=15000,
+                   help="Cap per class for undersampling majority classes. 0=no cap (default: 15000)")
     return p.parse_args()
 
 
@@ -99,7 +101,7 @@ class OrdinalCrossEntropy(nn.Module):
                        errors more heavily (breaks dominant-class attractors).
     """
 
-    def __init__(self, num_classes: int = 6, sigma: float = 0.7, gamma: float = 3.0,
+    def __init__(self, num_classes: int = 10, sigma: float = 1.0, gamma: float = 2.0,
                  class_weights: torch.Tensor = None):
         super().__init__()
         self.num_classes = num_classes
@@ -159,7 +161,7 @@ class OrdinalCrossEntropy(nn.Module):
 # MODEL
 # ========================================================================
 
-def build_model(num_classes: int = 6, pretrained: bool = True):
+def build_model(num_classes: int = 10, pretrained: bool = True):
     """
     Build EfficientNet-B4 with a custom classification head.
 
@@ -576,6 +578,7 @@ def main():
         args.data_csv, args.image_root,
         split="train", image_size=args.image_size,
         num_classes=args.num_classes,
+        max_samples_per_class=args.max_samples_per_class,
     )
     val_ds = FairFaceDataset(
         args.data_csv, args.image_root,
@@ -611,20 +614,16 @@ def main():
     print(f"  Total parameters: {total_params:,}")
 
     # ------------------------------------------------------------------
-    # Loss function — Ordinal Cross-Entropy with class weights
+    # Loss function — Ordinal Cross-Entropy
     # ------------------------------------------------------------------
-    # Tight sigma (0.7) = strict predictions, less hedging into Type IV.
-    # Class weights amplify loss for minority types (II, III).
-    # High focal gamma (3.0) = ignore easy extremes, focus on hard middle.
-    class_weights = train_ds.get_class_weights()
-    print(f"\n  Class weights: {class_weights.numpy().round(2)}")
+    # With ITA-based MST labels, the class boundaries are well-separated
+    # (27-35° gaps vs the old 5 L* gaps), so we don't need class weights
+    # or aggressive focal gamma. Clean ordinal loss should work.
     criterion = OrdinalCrossEntropy(
-        num_classes=args.num_classes, sigma=0.7, gamma=3.0,
-        class_weights=class_weights,
+        num_classes=args.num_classes, sigma=1.0, gamma=2.0,
     ).to(device)
-    print(f"  Loss: OrdinalCrossEntropy(sigma=0.7, gamma=3.0, weighted)")
-    print(f"  Soft labels give adjacent classes ~7% credit (tight Gaussian)")
-    print(f"  Minority classes (II, III) get higher loss multiplier")
+    print(f"\n  Loss: OrdinalCrossEntropy(sigma=1.0, gamma=2.0)")
+    print(f"  Soft labels give adjacent classes ~15% credit (Gaussian spread)")
 
     # ------------------------------------------------------------------
     # Mixed precision scaler
@@ -721,7 +720,7 @@ def main():
 
         train_loss, train_acc = train_one_epoch(
             model, train_loader, criterion, optimizer, scaler, device,
-            mixup_alpha=0.0,  # disabled — MixUp creates Type IV-like signals
+            mixup_alpha=0.3,  # re-enabled — ITA bins are well-separated
         )
         val_loss, val_acc, _, _ = evaluate(model, val_loader, criterion, device)
         scheduler.step(val_loss)  # ReduceLROnPlateau uses val_loss

@@ -30,6 +30,7 @@ env/
 # Data files (usually too large for GitHub)
 data/
 datasets/
+utkface-aligned-labeled/
 *.csv
 *.h5
 *.hdf5
@@ -37,15 +38,21 @@ datasets/
 *.pickle
 *.zip
 
-# Model files (can be large)
-models/*.h5
-models/*.keras
-models/*.pt
-models/*.pth
-models/*.onnx
+# Image files (dataset images)
+*.png
+*.jpg
+*.jpeg
+
+# Model & training outputs (can be very large)
+outputs/
+models/
+*.pth
+*.pt
+*.keras
+*.onnx
 *.weights
-outputs/*.keras
-outputs/*.pth
+*.npy
+*.npz
 
 # OS
 .DS_Store
