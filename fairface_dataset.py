@@ -37,6 +37,7 @@ def get_train_transforms(image_size: int = 380):
         transforms.RandomCrop(image_size),
         transforms.RandomHorizontalFlip(),
         transforms.RandomVerticalFlip(),
+        transforms.RandomAffine(degrees=15, translate=(0.05, 0.05), scale=(0.95, 1.05)),
         transforms.ColorJitter(
             brightness=0.3,
             contrast=0.3,
@@ -68,6 +69,7 @@ def get_minority_train_transforms(image_size: int = 380):
         transforms.RandomCrop(image_size),
         transforms.RandomHorizontalFlip(),
         transforms.RandomVerticalFlip(),
+        transforms.RandomAffine(degrees=15, translate=(0.05, 0.05), scale=(0.95, 1.05)),
         transforms.ColorJitter(
             brightness=0.35,
             contrast=0.35,

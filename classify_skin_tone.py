@@ -9,29 +9,42 @@ Approach B: Multi-Patch Consensus (corner/edge patches → outlier rejection →
 Pipeline: Try A first. If ring has < min_pixels, fall back to B.
 Flag low-confidence results (ITA std > 15°) for manual review.
 
+Filtering:
+  When --metadata-csv is provided, only images matching --image-type-filter
+  are processed (default: 'clinical: close-up'). This filters out dermoscopic
+  images whose polarised light corrupts ITA readings.
+
+Segmentation:
+  Uses milesial/Pytorch-UNet (https://github.com/milesial/Pytorch-UNet).
+  Clone:  git clone https://github.com/milesial/Pytorch-UNet.git
+  Then pass --unet-dir /path/to/Pytorch-UNet
+
 Outputs:
-  - CSV with per-image MST-5 predictions + confidence
+  - CSV with per-image MST-5 predictions + confidence + image_type
   - Visualisation images showing masks, rings, and patches used
 
 Dependencies:
   pip install torch torchvision pillow opencv-python-headless tqdm pandas numpy
-  pip install segmentation-models-pytorch   # for pretrained U-Net
+  git clone https://github.com/milesial/Pytorch-UNet.git
 
 Usage:
+  # Clinical close-up only (recommended for MSKCC):
   python classify_skin_tone.py \
-      --image-dir datasets/MSKCC/images/ \
+      --image-dir datasets/MSKCC-images/ \
+      --metadata-csv datasets/MSKCC-images/metadata.csv \
       --output-dir outputs/skin_tone_cascade/ \
       --visualise
 
-  # To use without U-Net (Approach B only):
+  # All images (no filtering):
   python classify_skin_tone.py \
-      --image-dir datasets/MSKCC/images/ \
+      --image-dir datasets/MSKCC-images/ \
       --output-dir outputs/skin_tone_cascade/ \
       --no-segmentation
 """
 
 import argparse
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -121,31 +134,71 @@ def ita_to_mst5(ita):
 # Approach A: Perilesional Ring Sampling
 # ───────────────────────────────────────────────────────────
 
-def load_segmentation_model(device="cpu"):
-    """Load pretrained U-Net for binary lesion segmentation."""
+def load_segmentation_model(device="cpu", weights_path=None, unet_dir=None):
+    """Load milesial/Pytorch-UNet for binary lesion segmentation."""
+    import torch
+
+    # Add the cloned Pytorch-UNet repo to sys.path so we can import `unet`
+    if unet_dir:
+        unet_path = os.path.abspath(unet_dir)
+        if unet_path not in sys.path:
+            sys.path.insert(0, unet_path)
+            print(f"  Added {unet_path} to sys.path")
+    else:
+        # Auto-detect: look for Pytorch-UNet/ next to this script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        auto_path = os.path.join(script_dir, "Pytorch-UNet")
+        if os.path.isdir(auto_path) and auto_path not in sys.path:
+            sys.path.insert(0, auto_path)
+            print(f"  Auto-detected U-Net repo at {auto_path}")
+
     try:
-        import segmentation_models_pytorch as smp
+        from unet import UNet
     except ImportError:
         warnings.warn(
-            "segmentation_models_pytorch not installed. "
-            "Install with: pip install segmentation-models-pytorch\n"
+            "milesial/Pytorch-UNet not found. "
+            "Clone it:  git clone https://github.com/milesial/Pytorch-UNet.git\n"
+            "Then pass:  --unet-dir /path/to/Pytorch-UNet\n"
             "Falling back to Approach B only."
         )
         return None
 
-    model = smp.Unet(
-        encoder_name="resnet34",
-        encoder_weights="imagenet",
-        in_channels=3,
-        classes=1,
-        activation=None,
-    )
-    # NOTE: This initialises with ImageNet encoder weights but random decoder.
-    # For production, load ISIC-trained weights:
-    #   model.load_state_dict(torch.load("unet_isic2018.pth", map_location=device))
-    #
-    # For now, we use a simple thresholding heuristic as a placeholder
-    # until you download proper ISIC-trained weights.
+    # We know our fine-tuned model has 2 classes (background and lesion)
+    model = UNet(n_channels=3, n_classes=2, bilinear=False)
+
+    if weights_path and os.path.isfile(weights_path):
+        state = torch.load(weights_path, map_location=device, weights_only=False)
+        # milesial's checkpoints may wrap state_dict under 'model_state_dict'
+        if isinstance(state, dict) and "model_state_dict" in state:
+            state = state["model_state_dict"]
+        # Remove 'mask_values' key which train.py adds but UNet doesn't expect
+        state.pop("mask_values", None)
+        model.load_state_dict(state)
+        print(f"  ✓ U-Net weights loaded from {weights_path}")
+    else:
+        # Download Carvana pretrained weights from milesial's release
+        url = ("https://github.com/milesial/Pytorch-UNet/releases/"
+               "download/v3.0/unet_carvana_scale0.5_epoch2.pth")
+        print(f"  Downloading pretrained U-Net weights from milesial release...")
+        try:
+            state = torch.hub.load_state_dict_from_url(
+                url, map_location=device, file_name="unet_carvana.pth"
+            )
+            # Carvana model has n_classes=2, ours needs n_classes=1
+            # Re-init with n_classes=2 to load, then adapt
+            model_tmp = UNet(n_channels=3, n_classes=2, bilinear=False)
+            model_tmp.load_state_dict(state)
+            # Copy all layers except final outc (class count mismatch)
+            for name, param in model_tmp.named_parameters():
+                if "outc" not in name:
+                    model.state_dict()[name].copy_(param)
+            print(f"  ✓ Pretrained Carvana weights loaded (encoder + decoder)")
+            print(f"    Note: Final output layer re-initialised for 1-class segmentation")
+        except Exception as e:
+            warnings.warn(f"Could not download pretrained weights: {e}\n"
+                         f"Using randomly initialised U-Net.")
+
+    model.to(device)
     model.eval()
     return model
 
@@ -182,31 +235,44 @@ def _segment_heuristic(image_bgr):
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
-    return mask.astype(bool)
+    return mask > 0
 
 
 def _segment_with_unet(image_bgr, model):
-    """Segment using a U-Net model. Returns boolean mask."""
+    """Segment using milesial U-Net model. Returns boolean mask."""
     import torch
-    import torch.nn.functional as F
 
     h, w = image_bgr.shape[:2]
+    device = next(model.parameters()).device
 
-    # Preprocess: resize to 256x256, normalise
+    # Preprocess: resize to 256x256, normalise to [0, 1]
     img_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
     img_resized = cv2.resize(img_rgb, (256, 256))
     tensor = torch.from_numpy(img_resized).float().permute(2, 0, 1) / 255.0
-    tensor = tensor.unsqueeze(0)
+    tensor = tensor.unsqueeze(0).to(device)
 
     with torch.no_grad():
-        logits = model(tensor)
-        prob = torch.sigmoid(logits)
-        mask_small = (prob.squeeze() > 0.5).cpu().numpy()
+        logits = model(tensor)  # (1, C, H, W)
+        
+        if logits.shape[1] > 1:
+            # Multi-class (n_classes=2): use softmax and take class 1 (lesion)
+            prob = torch.softmax(logits, dim=1)
+            mask_tensor = (prob[0, 1] > 0.5).to(torch.uint8).cpu()
+        else:
+            # Single-class (n_classes=1): use sigmoid
+            prob = torch.sigmoid(logits)
+            mask_tensor = (prob[0, 0] > 0.5).to(torch.uint8).cpu()
 
-    # Resize mask back to original size
-    mask = cv2.resize(mask_small.astype(np.uint8), (w, h),
-                      interpolation=cv2.INTER_NEAREST).astype(bool)
-    return mask
+    # === Nuclear: bypass numpy dtype bridge entirely ===
+    # Convert torch tensor → Python list of ints → raw bytes → np.frombuffer
+    mask_list = mask_tensor.flatten().tolist()       # list of 0s and 1s
+    mask_bytes = bytes(mask_list)                    # raw byte buffer
+    mask_flat = np.frombuffer(mask_bytes, dtype=np.uint8).copy()  # fresh uint8
+    mask_small = mask_flat.reshape(mask_tensor.shape[0], mask_tensor.shape[1])
+
+    # Resize mask back to original size (0/1 values, uint8 — safe for OpenCV)
+    mask_resized = cv2.resize(mask_small, (w, h), interpolation=cv2.INTER_NEAREST)
+    return mask_resized > 0
 
 
 def extract_perilesional_ring(lesion_mask, margin_px=30, min_pixels=500):
@@ -217,12 +283,14 @@ def extract_perilesional_ring(lesion_mask, margin_px=30, min_pixels=500):
         ring_mask: boolean mask of the perilesional ring
         has_enough_pixels: whether the ring has >= min_pixels skin pixels
     """
-    mask_uint8 = lesion_mask.astype(np.uint8) * 255
+    # Create a fresh uint8 mask using only np.zeros + direct indexing
+    mask_uint8 = np.zeros(lesion_mask.shape[:2], dtype=np.uint8)
+    mask_uint8[lesion_mask > 0] = 255
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
                                         (margin_px * 2 + 1, margin_px * 2 + 1))
     dilated = cv2.dilate(mask_uint8, kernel, iterations=1)
 
-    ring = (dilated > 0) & ~lesion_mask
+    ring = (dilated > 0) & (lesion_mask == 0)
 
     return ring, int(ring.sum()) >= min_pixels
 
@@ -476,6 +544,21 @@ def parse_args():
                    help="ITA std threshold for confidence flag (default: 15.0°)")
     p.add_argument("--extensions", type=str, default="jpg,jpeg,png,bmp,tif,tiff",
                    help="Image extensions to process (comma-separated)")
+    # Metadata-based filtering
+    p.add_argument("--metadata-csv", type=str, default=None,
+                   help="Path to metadata CSV with image_type column. "
+                        "If omitted, all images are processed.")
+    p.add_argument("--image-type-filter", type=str,
+                   default="clinical: close-up",
+                   help="Value in image_type column to keep "
+                        "(default: 'clinical: close-up')")
+    # U-Net config
+    p.add_argument("--unet-dir", type=str, default=None,
+                   help="Path to cloned milesial/Pytorch-UNet repo. "
+                        "If omitted, looks for Pytorch-UNet/ next to this script.")
+    p.add_argument("--unet-weights", type=str, default=None,
+                   help="Path to .pth weights for milesial/Pytorch-UNet. "
+                        "If omitted, downloads Carvana pretrained weights.")
     return p.parse_args()
 
 
@@ -503,12 +586,49 @@ def main():
 
     print(f"Found {len(image_files):,} images in {image_dir}")
 
-    # Load segmentation model
+    # ── Metadata-based filtering ──────────────────────────────
+    image_type_map = {}  # filename → image_type (for CSV output)
+    if args.metadata_csv:
+        meta_path = Path(args.metadata_csv)
+        if not meta_path.is_file():
+            print(f"⚠ Metadata CSV not found: {meta_path} — processing all images")
+        else:
+            meta_df = pd.read_csv(meta_path)
+            # Build lookup: isic_id → image_type
+            if "isic_id" in meta_df.columns and "image_type" in meta_df.columns:
+                id_to_type = dict(zip(meta_df["isic_id"], meta_df["image_type"]))
+                # Map filenames (stem) to image_type
+                for f in image_files:
+                    image_type_map[f.name] = id_to_type.get(f.stem, "unknown")
+
+                # Filter
+                before = len(image_files)
+                target_type = args.image_type_filter
+                image_files = [
+                    f for f in image_files
+                    if id_to_type.get(f.stem, "") == target_type
+                ]
+                after = len(image_files)
+                print(f"\n  Metadata filter: '{target_type}'")
+                print(f"    Before: {before:,} images")
+                print(f"    After:  {after:,} images  "
+                      f"({before - after:,} filtered out)")
+
+                if not image_files:
+                    print(f"❌ No images match filter '{target_type}'")
+                    return
+            else:
+                print(f"⚠ Metadata CSV missing 'isic_id' or 'image_type' columns")
+                print(f"  Available columns: {list(meta_df.columns)}")
+
+    # ── Load segmentation model ───────────────────────────────
     seg_model = None
     use_seg = not args.no_segmentation
     if use_seg:
-        print("Loading segmentation model...")
-        seg_model = load_segmentation_model()
+        import torch
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"\nLoading segmentation model (milesial/Pytorch-UNet) to {device}...")
+        seg_model = load_segmentation_model(device=str(device), weights_path=args.unet_weights, unet_dir=args.unet_dir)
         if seg_model is None:
             print("⚠ Segmentation model unavailable — using Approach B only")
             use_seg = False
@@ -539,6 +659,7 @@ def main():
 
         results.append({
             "file": img_path.name,
+            "image_type": image_type_map.get(img_path.name, ""),
             "ita": round(result["ita"], 2) if not np.isnan(result["ita"]) else None,
             "ita_std": round(result["ita_std"], 2),
             "mst10_class": result["mst10_class"],

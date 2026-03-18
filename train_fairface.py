@@ -45,7 +45,7 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
 )
 
-from fairface_dataset import FairFaceDataset
+from fairface_dataset import FairFaceDataset, get_val_transforms, get_train_transforms
 
 # ========================================================================
 # CONFIGURATION
@@ -287,6 +287,8 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device,
                 loss = criterion(outputs, labels)
 
         scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         scaler.step(optimizer)
         scaler.update()
 
@@ -376,16 +378,33 @@ def plot_training_history(history: dict, output_path: str):
 
 
 def plot_confusion_matrix(y_true, y_pred, class_names, output_path):
-    """Save a confusion matrix heatmap."""
+    """Save a confusion matrix heatmap using matplotlib (not seaborn).
+
+    v3.2: Replaced sns.heatmap with plt.imshow + manual text annotations
+    because seaborn's auto-formatter drops annotations when count disparity
+    between cells is extreme (e.g., 4000 vs 6).
+    """
     cm = confusion_matrix(y_true, y_pred, labels=range(len(class_names)))
+    n = len(class_names)
     fig, ax = plt.subplots(figsize=(10, 8))
-    sns.heatmap(
-        cm, annot=True, fmt="d", cmap="Blues",
-        xticklabels=class_names, yticklabels=class_names, ax=ax,
-    )
+    im = ax.imshow(cm, cmap="Blues", aspect="auto")
+
+    # Annotate every cell — guaranteed to render regardless of value
+    for i in range(n):
+        for j in range(n):
+            val = cm[i, j]
+            color = "white" if val > cm.max() * 0.5 else "black"
+            ax.text(j, i, str(val), ha="center", va="center",
+                    color=color, fontsize=11, fontweight="bold")
+
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(class_names, rotation=45, ha="right")
+    ax.set_yticklabels(class_names)
     ax.set_xlabel("Predicted", fontsize=12)
     ax.set_ylabel("True", fontsize=12)
     ax.set_title("Confusion Matrix — FairFace Skin Tone Classifier", fontsize=14)
+    plt.colorbar(im, ax=ax)
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
@@ -551,6 +570,70 @@ def plot_latent_space(embeddings, labels, class_names, output_path,
 
 
 # ========================================================================
+# TEST-TIME AUGMENTATION (TTA)
+# ========================================================================
+
+@torch.no_grad()
+def evaluate_tta(model, dataset, device, num_augments=5, batch_size=32,
+                 image_size=380, num_workers=4):
+    """
+    Test-Time Augmentation: average logits across multiple augmented
+    views plus one clean center-crop view.
+
+    v3.1: Typically gains ~1-3% accuracy for free (inference-only).
+    """
+    model.eval()
+    print(f"\n--- TTA Evaluation ({num_augments} augmented + 1 clean view) ---")
+
+    clean_tf = get_val_transforms(image_size)
+    aug_tf = get_train_transforms(image_size)
+
+    # Stash original transforms
+    orig_tf = dataset.transform
+    orig_min_tf = dataset._minority_transform
+
+    # Pass 0: clean center-crop
+    dataset.transform = clean_tf
+    dataset._minority_transform = clean_tf
+    clean_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=True)
+    all_logits = []
+    all_labels = []
+    for images, labels in clean_loader:
+        images = images.to(device)
+        logits = model(images).float()
+        all_logits.append(logits.cpu())
+        all_labels.extend(labels.numpy())
+
+    avg_logits = torch.cat(all_logits, dim=0)  # (N, C)
+
+    # Passes 1..N: augmented views
+    for aug_i in range(num_augments):
+        dataset.transform = aug_tf
+        dataset._minority_transform = aug_tf
+        aug_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,
+                                num_workers=num_workers, pin_memory=True)
+        aug_logits = []
+        for images, _ in aug_loader:
+            images = images.to(device)
+            logits = model(images).float()
+            aug_logits.append(logits.cpu())
+        avg_logits += torch.cat(aug_logits, dim=0)
+        print(f"  TTA pass {aug_i + 1}/{num_augments} complete")
+
+    # Average across all views
+    avg_logits /= (num_augments + 1)
+    preds = avg_logits.argmax(dim=1).numpy()
+    labels = np.array(all_labels)
+
+    # Restore original transforms
+    dataset.transform = orig_tf
+    dataset._minority_transform = orig_min_tf
+
+    return preds, labels
+
+
+# ========================================================================
 # MAIN
 # ========================================================================
 
@@ -588,12 +671,26 @@ def main():
 
     # --- WeightedRandomSampler for balanced training ---
     sample_weights = train_ds.get_sample_weights()
+
+    # Compute balanced epoch size: target ≈ largest_class × num_classes
+    # so every class is effectively drawn ~largest_class times per epoch.
+    class_counts = np.bincount(train_ds._labels, minlength=args.num_classes)
+    target_per_class = int(class_counts.max())
+    num_samples_balanced = target_per_class * args.num_classes
+
     sampler = WeightedRandomSampler(
         weights=sample_weights,
-        num_samples=len(train_ds),  # one full epoch worth of samples
-        replacement=True,           # required: minority classes redrawn
+        num_samples=num_samples_balanced,
+        replacement=True,
     )
-    print(f"  ✓ WeightedRandomSampler active ({len(train_ds):,} samples/epoch)")
+
+    # Log effective oversampling factors
+    print(f"  ✓ WeightedRandomSampler active ({num_samples_balanced:,} samples/epoch)")
+    print(f"    Target per class: ~{target_per_class:,}")
+    for cls_id in range(args.num_classes):
+        cnt = int(class_counts[cls_id])
+        factor = target_per_class / cnt if cnt > 0 else 0
+        print(f"    {train_ds.class_names[cls_id]}: {cnt:,} images → ~{target_per_class:,}/epoch ({factor:.1f}× oversample)")
 
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, sampler=sampler,
@@ -616,14 +713,14 @@ def main():
     # ------------------------------------------------------------------
     # Loss function — Ordinal Cross-Entropy
     # ------------------------------------------------------------------
-    # With ITA-based MST labels, the class boundaries are well-separated
-    # (27-35° gaps vs the old 5 L* gaps), so we don't need class weights
-    # or aggressive focal gamma. Clean ordinal loss should work.
+    # v3.2: Reverted to v3.0 baseline (sigma=1.0, no class weights).
+    # v3.1's class weights + tight sigma (0.8) caused a 77%→71% regression
+    # because they distorted the training signal on noisy labels.
     criterion = OrdinalCrossEntropy(
         num_classes=args.num_classes, sigma=1.0, gamma=2.0,
     ).to(device)
     print(f"\n  Loss: OrdinalCrossEntropy(sigma=1.0, gamma=2.0)")
-    print(f"  Soft labels give adjacent classes ~15% credit (Gaussian spread)")
+    print(f"  Soft labels give adjacent classes ~15% credit (v3.0 baseline)")
 
     # ------------------------------------------------------------------
     # Mixed precision scaler
@@ -705,13 +802,15 @@ def main():
     history["stage_boundary"] = args.epochs_head
 
     optimizer = optim.AdamW(model.parameters(), lr=1.2e-5, weight_decay=1e-5)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+    # v3.1: CosineAnnealingWarmRestarts for smoother LR decay.
+    # T_0=15 = first restart after 15 epochs, T_mult=2 = subsequent
+    # cycles double (30, 60...). Reduces the val_acc oscillation
+    # seen with ReduceLROnPlateau in v3.0.
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer,
-        mode="min",       # reduce LR when val_loss stops decreasing
-        factor=0.5,       # halve LR on plateau
-        patience=8,       # wait 8 epochs before reducing
-        min_lr=1e-7,
-        verbose=True,
+        T_0=15,
+        T_mult=2,
+        eta_min=1e-7,
     )
 
     for epoch in range(args.epochs_finetune):
@@ -723,7 +822,7 @@ def main():
             mixup_alpha=0.3,  # re-enabled — ITA bins are well-separated
         )
         val_loss, val_acc, _, _ = evaluate(model, val_loader, criterion, device)
-        scheduler.step(val_loss)  # ReduceLROnPlateau uses val_loss
+        scheduler.step(epoch)  # CosineAnnealing uses epoch number
         dt = time.time() - t0
 
         history["train_loss"].append(train_loss)
@@ -806,6 +905,24 @@ def main():
     plot_latent_space(
         embeddings, embed_labels, class_names,
         os.path.join(args.output_dir, "fairface_latent_space.png"),
+    )
+
+    # ------------------------------------------------------------------
+    # TTA Evaluation (v3.1) — compare against standard single-view
+    # ------------------------------------------------------------------
+    print(f"\n{'='*60}")
+    print("TTA EVALUATION (5 augmented views + 1 clean)")
+    print(f"{'='*60}")
+
+    tta_preds, tta_labels = evaluate_tta(
+        model, val_ds, device,
+        num_augments=5, batch_size=args.batch_size,
+        image_size=args.image_size, num_workers=args.num_workers,
+    )
+    print_evaluation_report(tta_labels, tta_preds, class_names)
+    plot_confusion_matrix(
+        tta_labels, tta_preds, class_names,
+        os.path.join(args.output_dir, "fairface_confusion_matrix_tta.png"),
     )
 
     print(f"\n{'='*60}")

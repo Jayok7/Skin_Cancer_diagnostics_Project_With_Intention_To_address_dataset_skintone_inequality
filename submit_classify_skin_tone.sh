@@ -2,25 +2,39 @@
 # =========================================================================
 # CSF Job: Lesion-Aware Skin Tone Classification (A+B Cascade)
 # =========================================================================
-# Purpose: Classify MSKCC dermoscopic images using perilesional ring (A)
-#          with multi-patch consensus fallback (B). CPU-only job.
+# Purpose: Classify MSKCC *clinical close-up* images using perilesional
+#          ring (A) with multi-patch consensus fallback (B).
+#          Uses milesial/Pytorch-UNet for segmentation.
 #
 # Usage:  sbatch submit_classify_skin_tone.sh
 # =========================================================================
 
-#SBATCH --job-name=mskcc_skin_tone
+#SBATCH --job-name=mskcc_closeup_ita
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
-#SBATCH --partition=multicore
-#SBATCH --time=04:00:00
+#SBATCH --gres=gpu:1
+#SBATCH --partition=gpuA
+#SBATCH --time=02:00:00
 #SBATCH --mail-type=BEGIN,END
 #SBATCH --mail-user=jamalidrissou2@gmail.com
 #SBATCH --output=logs/classify_skin_tone_%j.log
+#SBATCH --error=logs/classify_skin_tone_%j.err
+
+# Load modules
+module load apps/binapps/anaconda3/2021.11
+module load cuda/12.6.2
+
+# Activate conda env
+ENV_PATH="/mnt/iusers01/fse-ugpgt01/eee01/m84149ji/.conda/envs/tf_gpu"
+export PATH="$ENV_PATH/bin:$PATH"
+export LD_LIBRARY_PATH="$ENV_PATH/lib:$LD_LIBRARY_PATH"
 
 echo "=========================================="
 echo "MSKCC Skin Tone Classification (A+B Cascade)"
-echo "Started at $(date)"
+echo "  Filter: clinical close-up only"
+echo "  Segmentation: milesial/Pytorch-UNet"
+echo "  Started at $(date)"
 echo "=========================================="
 echo ""
 
@@ -28,32 +42,41 @@ cd ~/skin-cancer
 
 # Create directories
 mkdir -p logs
-mkdir -p outputs/skin_tone_cascade/visualisations
+mkdir -p outputs/skin_tone_cascade_closeup/visualisations
 
 # =========================================================================
 # Install dependencies
 # =========================================================================
 echo "Installing dependencies..."
 
-# Pin opencv to 4.10.x (compatible with numpy 1.x)
-pip install "opencv-python-headless<4.11" tqdm Pillow pandas
-# Force numpy 1.x LAST so nothing overrides it
-pip install --force-reinstall "numpy==1.26.4"
+# Do NOT pip install numpy or pandas — the conda env already has versions
+# compiled against each other. Overwriting them causes binary incompatibility.
+pip install "opencv-python-headless<4.11" tqdm Pillow
+
+# Clone milesial/Pytorch-UNet if not already present
+if [ ! -d "Pytorch-UNet" ]; then
+    echo "Cloning milesial/Pytorch-UNet..."
+    git clone https://github.com/milesial/Pytorch-UNet.git
+fi
 
 echo ""
 
 # =========================================================================
-# Run Classification (Approach B only — no U-Net for initial test)
+# Run Classification — Clinical Close-Up Only
 # =========================================================================
 echo "=========================================="
-echo "Running A+B cascade on MSKCC images"
-echo "(Using heuristic segmentation — no U-Net weights yet)"
+echo "Running A+B cascade on MSKCC close-up images"
+echo "  Filtering dermoscopic via metadata.csv"
+echo "  U-Net segmentation: Carvana pretrained (auto-download)"
 echo "=========================================="
 echo ""
 
 python classify_skin_tone.py \
     --image-dir datasets/MSKCC-images/ \
-    --output-dir outputs/skin_tone_cascade/ \
+    --metadata-csv datasets/MSKCC-images/metadata.csv \
+    --unet-dir Pytorch-UNet \
+    --unet-weights Pytorch-UNet/checkpoints/checkpoint_epoch50.pth \
+    --output-dir outputs/skin_tone_cascade_closeup/ \
     --visualise \
     --margin-px 30 \
     --min-ring-pixels 500 \

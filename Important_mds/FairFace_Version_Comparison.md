@@ -4,7 +4,8 @@
 
 Skin tone classifier using EfficientNet-B4, trained on FairFace dataset.
 - **v1.0–v2.6:** 6-way Fitzpatrick (Type I–VI) with L*-derived labels
-- **v3.0:** 5-way MST (ITA-derived labels) — paradigm shift
+- **v3.0+:** 5-way MST (ITA-derived labels) — paradigm shift
+- **v3.2:** Current best — cleaned ITA labels + reverted loss
 
 ---
 
@@ -20,11 +21,90 @@ Skin tone classifier using EfficientNet-B4, trained on FairFace dataset.
 | **2.4** | Partial freeze, MixUp, ↑WD | ~63% | ⚠️ III 4%, II 9% | Underfitting |
 | **2.5** | ↑backbone, wider sigma, ↓MixUp | ~67% | ❌ III/II 1% | Sigma too wide |
 | **2.6** | Class weights, tight sigma, no MixUp | ~67% | ❌ III/II collapsed | Labels are the problem |
-| **3.0** 🏆 | **MST-5 (ITA labels), paradigm shift** | **77.0%** | **✅ All ≥65%** | **No collapse!** |
+| **3.0** | **MST-5 (ITA labels), paradigm shift** | **77.0%** | **✅ All ≥65%** | **No collapse!** |
+| **3.1** | CosineLR, tighter sigma (0.8), class weights | 71.0% | ❌ | **Regression** (over-penalised majority) |
+| **3.2** 🏆 | **Reverted loss, cleaned ITA labels** | **82.3%** | **✅ All ≥72%** | **New best — +5pp over v3.0** |
 
 ---
 
-## v3.0 Results — MST-5 (Current Best)
+## v3.2 Results — MST-5 (Current Best) 🏆
+
+### Classification Report
+
+| Class | Precision | Recall | F1 | Support |
+|-------|:---------:|:------:|:--:|--------:|
+| Very Dark (MST 9-10) | 0.63 | **0.92** | 0.74 | 953 |
+| Dark (MST 7-8) | 0.86 | **0.83** | 0.85 | 4,788 |
+| Medium (MST 5-6) | **0.91** | 0.79 | 0.85 | 4,093 |
+| Light (MST 3-4) | 0.57 | **0.82** | 0.68 | 451 |
+| Very Light (MST 1-2) | 0.44 | **0.72** | 0.55 | 98 |
+
+| Metric | Value |
+|--------|------:|
+| Macro Accuracy | **0.8226** |
+| Macro Precision | 0.6830 |
+| Macro Recall | 0.8174 |
+| Macro F1 | **0.7325** |
+| Weighted F1 | **0.83** |
+
+### Confusion Matrix
+
+![v3.2 Confusion Matrix](file:///D:/skin%20cancer%20project/outputs/FairFace-Model-3.2-mst5/fairface_confusion_matrix.png)
+
+### Latent Space (UMAP)
+
+![v3.2 UMAP](file:///D:/skin%20cancer%20project/outputs/FairFace-Model-3.2-mst5/fairface_latent_space.png)
+
+**Observations:**
+- Smooth ordinal gradient from Very Dark (upper-left) to Very Light (lower-right)
+- Classes form a natural continuum rather than discrete clusters — matches the physical reality of skin tone
+- Better separation at extremes compared to v3.0
+
+### Training Curves
+
+![v3.2 Training Curves](file:///D:/skin%20cancer%20project/outputs/FairFace-Model-3.2-mst5/fairface_training_curves.png)
+
+**Diagnosis:**
+- **No overfitting.** Val loss sits *below* train loss throughout fine-tuning — augmentation/dropout regularise effectively. Unlike v3.1's wild oscillation (40–70%), v3.2 converges steadily.
+- **Not yet converged.** Both curves still improving at final epoch; extending to 70–80 epochs is the cheapest next gain.
+- **Train acc (~67%) < val acc (~75%)** at final epoch — confirms augmentation is aggressive enough to regularise without underfitting.
+
+### Wrap-Around Errors (Very Dark ↔ Very Light)
+
+| Direction | v3.0 | v3.1 | v3.2 |
+|-----------|:----:|:----:|:----:|
+| Very Dark → Very Light | 70 | 90 | **4** |
+| Very Light → Very Dark | 39 | 38 | **4** |
+| **Total** | **109** | **128** | **8** |
+
+> [!TIP]
+> Data cleaning eliminated **93% of wrap-around errors** (109→8). The remaining 8 are likely genuinely ambiguous images.
+
+### v3.0 → v3.2 Recall Comparison
+
+| Class | v3.0 | v3.1 | v3.2 | v3.0→v3.2 |
+|-------|:----:|:----:|:----:|:----------:|
+| Very Dark | 90% | 93% | **92%** | +2pp |
+| Dark | 84% | 82% | **83%** | −1pp |
+| Medium | 65% | 63% | **79%** | **+14pp** |
+| Light | 81% | 74% | **82%** | +1pp |
+| Very Light | 74% | 56% | **72%** | −2pp |
+
+> [!TIP]
+> The biggest win is **Medium recall: 65% → 79%** (+14pp). In v3.0, 27% of Medium was misclassified as Dark. Cleaned labels and reverted loss reduced this to 14%.
+
+### v3.3 Roadmap
+
+| Priority | Change | Expected Impact | Rationale |
+|:--------:|--------|:---------------:|-----------|
+| 🔴 | **Extend training 60 → 80 epochs** | +1–2pp macro acc | Both curves still improving; cheapest gain |
+| 🔴 | **Raise Very Light data** — source more light-skinned face data or lower cap to 6,000 | +5–10pp Very Light F1 | Only 98 val samples; 0.44 precision = more data needed |
+| 🟡 | **Shift Dark/VDark boundary** (−66.9° → −70°) | −30–50% Dark→VDark errors | 484 misclassified (10.1% of Dark), likely borderline ITA images |
+| 🟡 | **Notebook class mapping fix** | — | `mst5_mapping` in notebook is inverted (class 0 labelled as Very Light instead of Very Dark); only affects graph labels, not training |
+
+---
+
+## v3.0 Results — MST-5 (Previous Best)
 
 ### Classification Report
 
@@ -51,20 +131,37 @@ Skin tone classifier using EfficientNet-B4, trained on FairFace dataset.
 
 ![v3.0 UMAP](file:///D:/skin%20cancer%20project/outputs/FairFace-Model-3.0-mst5/fairface_latent_space.png)
 
-**Observations:**
-- Clean ordinal gradient — skin tones transition smoothly through embedding space
-- Distinct clusters for Very Dark and Very Light at extremes
-- Medium tones show good separation (unlike Fitzpatrick III/IV overlap)
-- No single class dominates or absorbs neighbours
-
 ### Training Curves
 
 ![v3.0 Training Curves](file:///D:/skin%20cancer%20project/outputs/FairFace-Model-3.0-mst5/fairface_training_curves.png)
 
-**Observations:**
-- Steady convergence after fine-tune start (~epoch 10)
-- Val loss tracks train loss without divergence — no overfitting
-- Val accuracy reaches ~75% and holds stable
+---
+
+## v3.1 Results — MST-5 (Regression)
+
+### Classification Report
+
+| Class | Precision | Recall | F1 | Support |
+|-------|:---------:|:------:|:--:|--------:|
+| Very Dark (MST 9-10) | 0.50 | 0.90 | 0.65 | 1,263 |
+| Dark (MST 7-8) | 0.74 | 0.76 | 0.75 | 4,793 |
+| Medium (MST 5-6) | 0.97 | 0.57 | 0.72 | 4,094 |
+| Light (MST 3-4) | 0.42 | 0.87 | 0.57 | 463 |
+| Very Light (MST 1-2) | 0.58 | 0.78 | 0.66 | 341 |
+
+| Metric | Value |
+|--------|------:|
+| Macro Accuracy | 0.7097 |
+| Macro Precision | 0.6443 |
+| Macro Recall | 0.7746 |
+| Macro F1 | 0.6695 |
+
+### Analysis of the Regression
+
+**Why did accuracy drop from 77% to 71%?**
+1. **Class Weights + Tighter Sigma:** Just like in v2.6, applying inverse-frequency class weights forced the model to over-prioritise the minority classes (Light, Very Light). This destroyed the precision for the Light class (0.54 → 0.42) because the model became "trigger-happy", guessing Light too often.
+2. **Medium Tone Collapse:** Medium recall plummeted from 0.65 to 0.57. Because Medium is a large majority class, the class weights told the model it was "less important", penalising it heavily.
+3. **Confusion Matrix Bug:** The seaborn heatmap failed to render the raw numbers in the bottom rows. This is a known matplotlib/seaborn formatting glitch caused by the very large numbers in the top rows contrasting with smaller numbers below when `fmt` is not strictly set, or due to the recent `numpy` version pinning.
 
 ---
 
