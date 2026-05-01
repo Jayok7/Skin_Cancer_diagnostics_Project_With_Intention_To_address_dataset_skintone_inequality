@@ -1,0 +1,50 @@
+{
+  "sft_metrics": {
+    "model": "SFT-only",
+    "total_examples": 74,
+    "overall_qc_pass_rate": "94.6%",
+    "keyword_pass_rate": "97.3%",
+    "indeterminate_pass_rate": "100.0%",
+    "spatial_pass_rate": "97.3%",
+    "length_pass_rate": "100.0%",
+    "safety_pass_rate": "100.0%",
+    "avg_word_count": "94.1",
+    "median_word_count": "93.0",
+    "per_class_qc_rate": {
+      "nv": "100.0%",
+      "vasc": "100.0%",
+      "bkl": "93.8%",
+      "akiec": "91.7%",
+      "df": "100.0%",
+      "mel": "100.0%",
+      "bcc": "50.0%"
+    }
+  },
+  "dpo_metrics": {
+    "model": "SFT+DPO",
+    "total_examples": 74,
+    "overall_qc_pass_rate": "90.5%",
+    "keyword_pass_rate": "94.6%",
+    "indeterminate_pass_rate": "100.0%",
+    "spatial_pass_rate": "95.9%",
+    "length_pass_rate": "100.0%",
+    "safety_pass_rate": "100.0%",
+    "avg_word_count": "95.3",
+    "median_word_count": "94.0",
+    "per_class_qc_rate": {
+      "nv": "100.0%",
+      "vasc": "100.0%",
+      "bkl": "87.5%",
+      "akiec": "91.7%",
+      "df": "75.0%",
+      "mel": "92.9%",
+      "bcc": "50.0%"
+    }
+  },
+  "pairwise_wins": {
+    "dpo": 1,
+    "sft": 4,
+    "tie": 69
+  },
+  "dpo_win_rate": "1.4%"
+}

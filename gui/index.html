@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Skin Cancer Classification AI | Medical Image Analysis</title>
+    <meta name="description"
+        content="AI-powered skin lesion classification with Grad-CAM visualization for diagnostic support">
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@600;700;800&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <div class="background-gradient"></div>
+
+    <header>
+        <div class="container">
+            <div class="logo">
+                <div class="logo-icon">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round" />
+                        <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" />
+                        <path d="M2 12L12 17L22 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" />
+                    </svg>
+                </div>
+                <div class="logo-text">
+                    <h1>DermaAI</h1>
+                    <p>Medical Image Analysis</p>
+                </div>
+            </div>
+
+            <div class="header-controls">
+                <select id="modelSelect" class="header-select" title="Select Diagnostic Model">
+                    <option value="">Loading models...</option>
+                </select>
+
+                <button class="theme-toggle" id="themeToggle" title="Toggle dark mode">
+                    <svg class="sun-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2" />
+                        <path
+                            d="M12 1V3M12 21V23M4.22 4.22L5.64 5.64M18.36 18.36L19.78 19.78M1 12H3M21 12H23M4.22 19.78L5.64 18.36M18.36 5.64L19.78 4.22"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    </svg>
+                    <svg class="moon-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="hero">
+            <h2>AI-Powered Skin Lesion Classification</h2>
+            <p class="subtitle">Upload a dermoscopic image for instant analysis with explainable AI visualization</p>
+        </section>
+
+        <div class="main-grid">
+            <!-- Upload Section -->
+            <section class="card upload-section" id="uploadSection">
+                <div class="card-header">
+                    <h3>Upload Image</h3>
+                    <p>Drag and drop or click to select</p>
+                </div>
+
+                <div class="upload-zone" id="uploadZone">
+                    <input type="file" id="fileInput" accept="image/*" hidden>
+                    <div class="upload-placeholder" id="uploadPlaceholder">
+                        <div class="upload-icon">
+                            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path
+                                    d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" />
+                                <path d="M17 8L12 3L7 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" />
+                                <path d="M12 3V15" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                    stroke-linejoin="round" />
+                            </svg>
+                        </div>
+                        <p class="upload-text">Drop your image here</p>
+                        <p class="upload-subtext">or click to browse</p>
+                        <div class="supported-formats">PNG, JPG, JPEG supported</div>
+                    </div>
+                    <div class="image-preview" id="imagePreview" style="display: none;">
+                        <img id="previewImage" src="" alt="Preview">
+                        <button class="remove-btn" id="removeBtn">
+                            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="model-selector" style="margin-top: 1.5rem; text-align: left;">
+                    <label for="modelSelect"
+                        style="display:block; margin-bottom: 0.5rem; font-weight:600; font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Diagnostic
+                        Model</label>
+                    <select id="modelSelect"
+                        style="width: 100%; padding: 0.85rem 1rem; border-radius: 12px; border: 1px solid var(--border-color); background: var(--bg-dark); color: var(--text-primary); font-family: var(--font-body); font-size: 1rem; cursor: pointer; appearance: none; outline: none; box-shadow: var(--shadow-sm);">
+                        <option value="">Loading models...</option>
+                    </select>
+                </div>
+
+                <button class="analyze-btn" id="analyzeBtn" disabled>
+
+                    <button class="analyze-btn" id="analyzeBtn" disabled>
+                        <span class="btn-text">Analyze Image</span>
+                        <span class="btn-loader" style="display: none;">
+                            <span class="spinner"></span>
+                            Analyzing...
+                        </span>
+                    </button>
+            </section>
+
+            <!-- Results Section -->
+            <section class="card results-section" id="resultsSection" style="display: none;">
+                <div class="card-header">
+                    <h3>Analysis Results</h3>
+                    <p>AI-generated diagnosis with explainability</p>
+                </div>
+
+                <div class="results-grid">
+                    <!-- Left: Visual Panel -->
+                    <div class="visual-panel">
+                        <!-- Image Comparison -->
+                        <div class="image-comparison">
+                            <div class="comparison-item">
+                                <div class="comparison-label">Original Image</div>
+                                <div class="comparison-image">
+                                    <img id="originalImage" src="" alt="Original">
+                                </div>
+                            </div>
+                            <div class="comparison-item">
+                                <div class="comparison-label">Grad-CAM Heatmap</div>
+                                <div class="comparison-image">
+                                    <img id="gradcamImage" src="" alt="Grad-CAM">
+                                </div>
+                                <div class="heatmap-legend">
+                                    <span>Low</span>
+                                    <div class="legend-gradient"></div>
+                                    <span>High</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- MOVED HERE: VLM Reasoning now sits below the images -->
+                        <div class="vlm-box">
+                            <div class="vlm-header">Diagnostic Reasoning</div>
+                            <p id="vlmOutput">Waiting for analysis...</p>
+                        </div>
+                    </div>
+
+                    <!-- Right: Text Panel -->
+                    <div class="text-panel">
+                        <div class="clinical-disclaimer">AI-assisted analysis - for clinical decision support only</div>
+
+                        <!-- Prediction -->
+                        <div class="prediction-box">
+                            <div class="prediction-label">Predicted Diagnosis</div>
+                            <div class="prediction-value" id="predictionValue">-</div>
+                            <div class="confidence-bar">
+                                <div class="confidence-fill" id="confidenceFill"></div>
+                            </div>
+                            <div class="confidence-text" id="confidenceText">Confidence: -</div>
+                        </div>
+
+                        <!-- All Classifications -->
+                        <div class="all-predictions">
+                            <div class="all-predictions-header">All Classification Scores</div>
+                            <div class="predictions-list" id="predictionsList"></div>
+                        </div>
+
+                        <!-- REMOVED from here: vlm-box is now in visual-panel above -->
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Info Cards -->
+        <div class="info-grid">
+            <div class="info-card">
+                <div class="info-icon">🔬</div>
+                <h4>7 Diagnostic Categories</h4>
+                <p>Comprehensive analysis across all major pigmented lesion types</p>
+            </div>
+            <div class="info-card">
+                <div class="info-icon">🧠</div>
+                <h4>Deep Learning CNN</h4>
+                <p>EfficientNetB3 fine-tuned on dermoscopic images</p>
+            </div>
+            <div class="info-card">
+                <div class="info-icon">🎯</div>
+                <h4>Explainable AI</h4>
+                <p>Grad-CAM visualization highlights decision-making regions</p>
+            </div>
+        </div>
+
+        <footer class="disclaimer">
+            <strong>Medical Disclaimer:</strong> This tool is for educational and research purposes only.
+            It should not be used as a substitute for professional medical advice, diagnosis, or treatment.
+            Always consult with a qualified healthcare provider for medical decisions.
+        </footer>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+
+</html>

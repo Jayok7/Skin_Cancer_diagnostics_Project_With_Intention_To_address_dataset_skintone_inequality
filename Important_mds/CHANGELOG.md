@@ -4,6 +4,53 @@ Version history for the FairFace skin tone classifier (MST and legacy Fitzpatric
 
 ---
 
+## v3.2 (fine-tuned) — MSKCC Domain Adaptation *(2026-03-25)*
+
+**Focus:** Fine-tune the v3.2 model on MSKCC dermatological images with human expert MST rater labels to improve clinical skin tone classification.
+
+### Motivation
+
+v3.2 was trained exclusively on FairFace/UTKFace facial images with ITA-derived pseudo-labels. MSKCC provides ground-truth MST ratings from trained dermatology raters on clinical lesion images, which is the target deployment domain. Fine-tuning on MSKCC recalibrates decision boundaries for clinical imagery.
+
+### Data Pipeline
+
+- **Label source:** MSKCC-MST inter-rater CSV (MST 1-10 scale from 2 raters per site)
+- **Data linkage:** `isic_id → tag_id` (colorimeter CSV) → `mst_r1, mst_r2` (inter-rater CSV) → MST-5
+- **Rater consensus:** If raters agree, use that value; if not, average + round
+- **Image preprocessing:**
+  - *Non-lesional sites (~639):* Direct center crop (clean skin)
+  - *Lesional sites (~607):* A→B cascade (U-Net perilesional ring → inpaint → save; fallback to corner patches)
+- **Split:** 80/20 patient-stratified train/val (no data leakage)
+
+### Training Configuration
+
+- Single-stage fine-tuning (no head-only phase — checkpoint already trained)
+- Checkpoint: v3.2 `best_finetuned_model.pth`
+- Last 2 EfficientNet-B4 blocks unfrozen (more aggressive freeze than v3.2's 4 blocks)
+- LR: `1e-5` with CosineAnnealing (T_max=30)
+- Dropout: `0.6` (up from 0.5)
+- Weight decay: `5e-4` (up from 1e-5)
+- MixUp: Disabled (dataset too small)
+- OrdinalCE: sigma=1.0, gamma=2.0 (same as v3.2)
+
+### New Files
+
+- `prepare_mskcc_labels.py` — joins MSKCC-MST CSVs, maps MST-10 → MST-5, outputs `mskcc_mst5_labels.csv`
+- `preprocess_mskcc_crops.py` — offline A→B cascade preprocessing for lesional images
+- `mskcc_dataset.py` — PyTorch Dataset for MSKCC crops
+- `submit_mskcc_finetune.sh` — Slurm submission script for CSF cluster
+
+### Files Modified
+
+- `train_fairface.py` — added `--finetune-mskcc` mode with `main_mskcc_finetune()` function
+
+### Results
+
+*Pending — run on CSF cluster*
+
+---
+
+
 ## v3.1 — MST-5 Optimisation *(2026-03-07)*
 
 **Focus:** Improve macro accuracy and F1 by addressing per-class bottlenecks from v3.0

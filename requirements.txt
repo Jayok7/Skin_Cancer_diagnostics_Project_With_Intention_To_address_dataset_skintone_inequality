@@ -1,0 +1,21 @@
+# Deep Learning Framework
+torch
+
+# Web Framework
+Flask
+
+# Data Science & Image Processing
+numpy<2.0
+pandas
+matplotlib
+seaborn
+scikit-learn
+opencv-python-headless
+Pillow
+
+# Hugging Face & VLM Ecosystem
+transformers
+peft
+qwen-vl-utils
+accelerate
+bitsandbytes

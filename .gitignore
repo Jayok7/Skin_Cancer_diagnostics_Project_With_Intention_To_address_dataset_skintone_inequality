@@ -17,6 +17,7 @@ env/
 # Jupyter Notebook
 .ipynb_checkpoints/
 *.ipynb_checkpoints
+*.ipynb
 
 # IDE & Agent Config
 .idea/
@@ -27,7 +28,7 @@ env/
 *.swo
 *~
 
-# Data files (usually too large for GitHub)
+# Data files (too large for GitHub — download from links in README)
 data/
 datasets/
 utkface-aligned-labeled/
@@ -46,6 +47,7 @@ utkface-aligned-labeled/
 # Model & training outputs (can be very large)
 outputs/
 models/
+checkpoints/
 *.pth
 *.pt
 *.keras
@@ -58,17 +60,61 @@ models/
 .DS_Store
 Thumbs.db
 
-# Logs
+# Logs and error files
 *.log
 logs/
+err out and log files/
 
 # Environment variables
 .env
 
-# CSF Documentation
+# ── Excluded project files ──────────────────
+# CSF internal docs (not relevant to reproduction)
 CSF_GPU_GUIDE.md
 CSF_QUICKSTART.md
 SSH_COMMANDS.md
+FAIRFACE_SUBMISSION_GUIDE.md
+Important_mds/
+
+# Old/one-off scripts not part of the pipeline
 submit_job.sh
 submit_csf.sh
-FAIRFACE_SUBMISSION_GUIDE.md
+submit_csf_3way.sh
+submit_mskcc_diagnostic.sh
+submit_mskcc_finetune.sh
+submit_umap.sh
+submit_label_isic2018.sh
+submit_label_isic2019.sh
+submit_label_mskcc.sh
+submit_utkface_labels.sh
+m84149ji@csf3.it
+^
+run_labelling.sh
+analyze_dataset.py
+extract_embeddings.py
+visualise_latent_space.py
+generate_nb.py
+label_skin_tone.py
+label_isic2018.py
+prepare_mskcc_labels.py
+preprocess_mskcc_crops.py
+Patient_Test_Split
+diagnose_dark_medium.py
+diagnose_mskcc_finetune.py
+evaluate_mskcc_cnn.py
+train_fitzpatrick.py
+MSKCC_Advanced_Eval_Cell.py
+docs/
+data analysis/
+Model optimisations/
+
+# Testing and experiment scripts
+style_transfer_test.py
+test_reinhard_mask.py
+stylegan_augmentation.py
+
+# Teacher generation (kept as reference, not core pipeline)
+VLM-Finetune/teacher_generation.py
+
+# Qwen reference file
+VLM-Finetune/qc_reference.py

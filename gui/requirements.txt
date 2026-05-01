@@ -1,0 +1,11 @@
+flask
+tensorflow
+numpy
+pillow
+opencv-python
+torch
+torchvision
+transformers
+peft
+qwen-vl-utils
+accelerate
