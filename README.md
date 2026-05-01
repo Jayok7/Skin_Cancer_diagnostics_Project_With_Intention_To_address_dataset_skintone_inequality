@@ -135,7 +135,7 @@ Generates synthetic dark-skin-tone images to balance the training set using two 
 
 | Method                         | λ Control         | What it does                                        |
 | ------------------------------ | ------------------ | --------------------------------------------------- |
-| **UNET Skin Transplant** | λ proportion      | Global colour transfer — fast, preserves structure |
+| **UNET Skin Transplant** | λ proportion      | Lesion-aware segmentation — augments healthy skin, preserves core lesion |
 | **Poisson Blending**     | 1 − λ proportion | Gradient-domain — better texture, slower           |
 
 ```bash
