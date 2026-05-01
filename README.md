@@ -1,4 +1,3 @@
-
 # Equitable Skin Cancer Diagnostics with VLM-Guided Clinical Reasoning
 
 > A reproducible pipeline for building fair, interpretable skin cancer diagnostic systems — from skin tone classification through augmented training to VLM-based clinical reasoning.
@@ -12,7 +11,7 @@
 This project addresses **diagnostic bias in dermatology AI** by building a complete pipeline that:
 
 1. **Classifies skin tone** using the Monk Skin Tone (MST) scale via an EfficientNet-B4 model trained on a merged FairFace and UTKFace dataset
-2. **Augments underrepresented skin tones** using Reinhard colour transfer + Poisson blending (configurable λ ratio)
+2. **Augments underrepresented skin tones** using UNET-Skin transplant + Poisson blending (configurable λ ratio)
 3. **Trains diagnostic models** (EfficientNet-B3) on balanced datasets and evaluates fairness across skin tones
 4. **Generates clinical reasoning** using a Vision-Language Model (Qwen2.5-VL-7B) fine-tuned with SFT + DPO
 5. **Provides a clinical GUI** for real-time lesion analysis with Grad-CAM visualisation and VLM reasoning
@@ -133,10 +132,10 @@ python classify_skin_tone.py \
 
 Generates synthetic dark-skin-tone images to balance the training set using two methods:
 
-| Method                         | λ Control         | What it does                                        |
-| ------------------------------ | ------------------ | --------------------------------------------------- |
-| **UNET Skin Transplant** | λ proportion      | Lesion-aware segmentation — augments healthy skin, preserves core lesion |
-| **Poisson Blending**     | 1 − λ proportion | Gradient-domain — better texture, slower           |
+| Method                         | λ Control         | What it does                                                             |
+| ------------------------------ | ------------------ | ------------------------------------------------------------------------ |
+| **UNET Skin Transplant** | λ proportion      | Lesion-aware segmentation - augments healthy skin, preserves core lesion |
+| **Poisson Blending**     | 1 − λ proportion | Gradient-domain - better texture, slower                                |
 
 ```bash
 # Generate augmented images (λ=0.7 → 70% Skin Transplant, 30% Poisson)
@@ -386,4 +385,3 @@ If you use this work, please cite:
 MIT Licence. See [LICENCE](LICENCE) for details.
 
 > **Medical disclaimer**: This system is for research purposes only. It does not provide medical diagnoses and should not be used as a substitute for professional medical advice.
->
