@@ -31,6 +31,7 @@ env/
 # Data files (too large for GitHub — download from links in README)
 data/
 datasets/
+!datasets/*.py
 utkface-aligned-labeled/
 *.csv
 *.h5
