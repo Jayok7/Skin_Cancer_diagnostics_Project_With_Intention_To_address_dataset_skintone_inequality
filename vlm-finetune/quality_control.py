@@ -4,11 +4,11 @@ quality_control.py
 Five-stage quality gate for teacher-generated clinical reasoning.
 
 Stages:
-  1. Keyword constraint checking  — min 2 clinical keyword matches
-  2. Indeterminate filter          — reject hedged non-answers
-  3. Spatial alignment (Grad-CAM)  — spatial references must match heatmap
-  4. Length check                   — 60-200 words
-  5. Safety language               — must hedge, must not be definitive
+  1. Keyword constraint checking - min 2 clinical keyword matches
+  2. Indeterminate filter          - reject hedged non-answers
+  3. Spatial alignment (Grad-CAM)  - spatial references must match heatmap
+  4. Length check                   - 60-200 words
+  5. Safety language               - must hedge, must not be definitive
 
 Expected discard rate: 20-30%  →  from 2500 raw → target ≥1750 clean
 Minimum viable dataset: 1500 clean examples
@@ -33,7 +33,7 @@ def check_keywords(record, min_keyword_matches=2):
     Verify that the teacher output contains at least `min_keyword_matches`
     keywords from the expected keyword list for the predicted class.
 
-    Why: catches gross factual errors — e.g., if the CNN predicts melanoma
+    Why: catches gross factual errors - e.g., if the CNN predicts melanoma
     but the teacher describes "cherry angioma," something is wrong.
 
     Returns: (pass: bool, matched_keywords: list)
@@ -157,13 +157,13 @@ def check_spatial_alignment(record, tolerance=True):
     gradcam_parts = set(gradcam_region.split('-'))
     if gradcam_region == 'diffuse':
         # Diffuse activation is compatible with any spatial reference
-        return True, 'diffuse activation — any spatial reference acceptable'
+        return True, 'diffuse activation: any spatial reference acceptable'
 
     # Extract spatial references from text
     text_regions = extract_spatial_references(reasoning)
 
     if len(text_regions) == 0:
-        # No spatial claims made — passes by default
+        # No spatial claims made, passes by default
         return True, 'no spatial claims in text'
 
     # Check for contradictions
@@ -313,7 +313,7 @@ def run_quality_control(input_path, output_path, report_path):
             })
             continue
 
-        # Passed all checks — enrich with QC metadata
+        # Passed all checks, enrich with QC metadata
         record['qc_metadata'] = {
             'keywords_matched': kw_matched,
             'spatial_status': spatial_reason,
@@ -364,7 +364,7 @@ def run_quality_control(input_path, output_path, report_path):
     for cls, count in sorted(report['class_distribution'].items()):
         print(f'  {cls:8s}: {count}')
     print(f'\nMeets minimum (1500): '
-          f'{"YES ✓" if report["meets_minimum_threshold"] else "NO — NEED MORE DATA ✗"}')
+          f'{"YES ✓" if report["meets_minimum_threshold"] else "NO, NEEDS MORE DATA ✗"}')
     print('=' * 60)
 
     return clean, report

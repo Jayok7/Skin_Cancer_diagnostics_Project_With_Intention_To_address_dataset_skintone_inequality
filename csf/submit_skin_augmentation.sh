@@ -30,7 +30,7 @@ echo "Job ID: $SLURM_JOB_ID"
 
 mkdir -p logs
 
-# ── Configuration ──────────────────────────────────────────
+#  Configuration
 ISIC_CSV="outputs/isic2019_skin_tone_labels.csv"
 MSKCC_CSV="outputs/mskcc_skin_tone_labels.csv"
 ISIC_IMAGES="datasets/ISIC_2019_Training_Input"
@@ -50,7 +50,7 @@ echo "  Lambda:       $LAMBDA"
 echo "  Target/class: $TARGET"
 echo ""
 
-# ── Validation ─────────────────────────────────────────────
+# -- Validation ---------------------------------------------------
 if [ ! -f "$ISIC_CSV" ]; then
     echo "ERROR: ISIC labels CSV not found at $ISIC_CSV"
     exit 1
@@ -71,7 +71,7 @@ if [ ! -d "$MSKCC_IMAGES" ]; then
     exit 1
 fi
 
-# ── Run augmentation ───────────────────────────────────────
+# -- Run augmentation ---------------------------------------------------
 python skin_tone_augmentation.py \
     --isic-csv "$ISIC_CSV" \
     --mskcc-csv "$MSKCC_CSV" \

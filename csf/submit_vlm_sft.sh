@@ -31,7 +31,7 @@ echo "Job ID: $SLURM_JOB_ID"
 cd ~/skin-cancer
 mkdir -p logs checkpoints/sft
 
-# ── Environment ────────────────────────────────────────────
+#  Environment -----------------------------------------------
 module load apps/binapps/anaconda3/2021.11
 module load cuda/12.6.2
 
@@ -51,7 +51,7 @@ echo ""
 nvidia-smi
 echo ""
 
-# ── Validate ───────────────────────────────────────────────
+#  -- Validate -----------------------------------------------
 if [ ! -f "training_data/formatted/train.jsonl" ]; then
     echo "ERROR: Training data not found."
     echo "  Run submit_vlm_qc_format.sh first."
@@ -61,7 +61,7 @@ fi
 echo "  Train data: $(wc -l < training_data/formatted/train.jsonl) examples"
 echo "  Val data:   $(wc -l < training_data/formatted/validation.jsonl) examples"
 
-# ── Run SFT ────────────────────────────────────────────────
+# -- Run SFT -----------------------------------------------
 python train_sft.py
 
 echo ""

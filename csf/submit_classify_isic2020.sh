@@ -9,7 +9,7 @@
 #SBATCH --error=outputs/isic2020_classify_%j.err
 
 # ═══════════════════════════════════════════════════════════════
-# ISIC 2020 Skin Tone Classification — Slurm Submission
+# ISIC 2020 Skin Tone Classification - Slurm Submission
 # ═══════════════════════════════════════════════════════════════
 # Uses the 3-class fine-tuned model to label ~33k ISIC 2020 images.
 #

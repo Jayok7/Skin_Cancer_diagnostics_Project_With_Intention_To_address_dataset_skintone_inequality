@@ -33,7 +33,7 @@ export PATH="$ENV_PATH/bin:$PATH"
 
 pip install "numpy<2.0" scikit-learn 2>/dev/null
 
-# ── Step 3: Quality Control ──
+#  Step 3: Quality Control  
 echo ""
 echo "═══ Step 3: Quality Control ═══"
 
@@ -59,7 +59,7 @@ fi
 
 echo "  QC report: $QC_REPORT"
 
-# ── Step 4: Format Dataset ──
+#  Step 4: Format Dataset 
 echo ""
 echo "═══ Step 4: Format Dataset ═══"
 

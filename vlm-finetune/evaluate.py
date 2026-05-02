@@ -1,12 +1,12 @@
 """
 evaluate.py
 Comprehensive evaluation of the fine-tuned model across multiple dimensions:
-  1. QC pass rate — does the model's output survive the quality pipeline?
-  2. Clinical accuracy — keyword overlap with expected terminology
-  3. Spatial fidelity — alignment with Grad-CAM regions
-  4. Safety compliance — hedging language presence, no definitive claims
-  5. Fluency & length — within target range
-  6. DPO win rate — does the DPO model beat the SFT-only model?
+  1. QC pass rate: does the model's output survive the quality pipeline?
+  2. Clinical accuracy: keyword overlap with expected terminology
+  3. Spatial fidelity: alignment with Grad-CAM regions
+  4. Safety compliance: hedging language presence, no definitive claims
+  5. Fluency & length: within target range
+  6. DPO win rate: does the DPO model beat the SFT-only model?
 """
 
 import json

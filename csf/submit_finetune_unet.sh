@@ -116,7 +116,7 @@ pip install tqdm wandb
 sed -i "s/del state_dict\['mask_values'\]/state_dict.pop('mask_values', None)/" train.py
 # b) Use SLURM-allocated CPUs, not full node (os.cpu_count() sees all 48 cores, we only have 4)
 sed -i "s/num_workers=os.cpu_count()/num_workers=min(os.cpu_count(), int(os.environ.get('SLURM_CPUS_PER_TASK', 4)))/" train.py
-# c) ISIC images have varying sizes — resize all to fixed 256x256 so they can be batched
+# c) ISIC images have varying sizes:  resize all to fixed 256x256 so they can be batched
 sed -i 's/newW, newH = int(scale \* w), int(scale \* h)/newW, newH = 256, 256/' utils/data_loading.py
 
 # 6. Execute Training

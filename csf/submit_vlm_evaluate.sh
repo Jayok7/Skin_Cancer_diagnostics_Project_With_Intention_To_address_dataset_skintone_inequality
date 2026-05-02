@@ -30,7 +30,7 @@ echo "Job ID: $SLURM_JOB_ID"
 cd ~/skin-cancer
 mkdir -p logs
 
-# ── Environment ────────────────────────────────────────────
+#  Environment -----------------------------------------------
 module load apps/binapps/anaconda3/2021.11
 module load cuda/12.6.2
 
@@ -49,7 +49,7 @@ echo ""
 nvidia-smi
 echo ""
 
-# ── Validate ───────────────────────────────────────────────
+#  -- Validate -----------------------------------------------
 for d in "checkpoints/sft/final" "checkpoints/dpo/final"; do
     if [ ! -d "$d" ]; then
         echo "ERROR: Model not found at $d"
@@ -57,7 +57,7 @@ for d in "checkpoints/sft/final" "checkpoints/dpo/final"; do
     fi
 done
 
-# ── Evaluate ───────────────────────────────────────────────
+#  -- Evaluate ----------------------------------------------
 python evaluate.py
 
 echo ""

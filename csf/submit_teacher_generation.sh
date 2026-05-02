@@ -57,7 +57,7 @@ echo ""
 nvidia-smi
 echo ""
 
-# ── Configuration ──────────────────────────────────────────
+#  Configuration    
 CNN_OUTPUTS="training_data/cnn_outputs.json"
 OUTPUT="training_data/teacher_outputs_free.json"
 MAX_SAMPLES=2500
@@ -68,14 +68,14 @@ echo "  Output:      $OUTPUT"
 echo "  Max samples: $MAX_SAMPLES"
 echo "  Model:       $MODEL"
 
-# ── Validate ───────────────────────────────────────────────
+#  Validate          
 if [ ! -f "$CNN_OUTPUTS" ]; then
     echo "ERROR: CNN outputs not found at $CNN_OUTPUTS"
     echo "  Run submit_generate_cnn_outputs.sh first."
     exit 1
 fi
 
-# ── Run ────────────────────────────────────────────────────
+# Run 
 python teacher_generation_free.py \
     --cnn-outputs "$CNN_OUTPUTS" \
     --output "$OUTPUT" \

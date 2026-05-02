@@ -50,7 +50,7 @@ mkdir -p outputs/skin_tone_cascade_closeup/visualisations
 # =========================================================================
 echo "Installing dependencies..."
 
-# Do NOT pip install numpy or pandas — the conda env already has versions
+# Do NOT pip install numpy or pandas - the conda env already has versions
 # compiled against each other. Overwriting them causes binary incompatibility.
 pip install "opencv-python-headless<4.11" tqdm Pillow seaborn scikit-learn
 
@@ -63,7 +63,7 @@ fi
 echo ""
 
 # =========================================================================
-# Run Classification — Clinical Close-Up Only
+# Run Classification - Clinical Close-Up Only
 # =========================================================================
 echo "=========================================="
 echo "Running A+B cascade on MSKCC close-up images"

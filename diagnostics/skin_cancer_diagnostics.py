@@ -2,10 +2,6 @@
 """
 Combined Skin Cancer Diagnostics — EfficientNet Fairness + Grad-CAM
 ====================================================================
-This script merges:
-  1. EfficientNet v2 B0 skin cancer classification (HAM10000) with
-     per-class evaluation, confusion matrix, and fairness metrics.
-  2. Grad-CAM visualisation of model attention regions.
 
 All output (plots, metrics, Grad-CAM images) is saved to the output
 directory specified by --output-dir.
@@ -54,7 +50,7 @@ from PIL import Image
 IMAGE_SIZE      = 300       # EfficientNet-B3 native resolution
 BATCH_SIZE      = 32
 HEAD_EPOCHS     = 20
-FINETUNE_EPOCHS = 60        # Total: 80 epochs
+FINETUNE_EPOCHS = 20        # Total: 40 epochs (matching notebook)
 LR_HEAD         = 1e-3
 LR_FINETUNE     = 1e-5
 LABEL_SMOOTHING = 0.1
@@ -257,53 +253,23 @@ def train_model(model, train_loader, val_loader, device, output_dir,
         _log_epoch(epoch + 1, total_epochs, tloss, tacc, vloss, vacc)
 
     # Stage 2: Full fine-tune
-    print(f"\n--- Stage 2: Fine-tune [{FINETUNE_EPOCHS} epochs] ---")
-    for p in model.parameters(): p.requires_grad = True
-    opt = torch.optim.Adam(model.parameters(), lr=LR_FINETUNE)
-    
-    # Early Stopping Variables
-    patience = 15
-    stagnant_epochs = 0
-    best_ta_ft = 0.0 # Track best train accuracy during fine-tuning
-    
-    for e in range(FINETUNE_EPOCHS):
-        tlo, ta = train_one_epoch(model, tl, criterion, opt, device, scaler)
-        vlo, va, _, _, _ = evaluate(model, vl, criterion, device)
-        
-        hist["train_loss"].append(tlo); hist["train_acc"].append(ta)
-        hist["val_loss"].append(vlo); hist["val_acc"].append(va)
-        m = ""
-        
-        # 1. Track Overall Best Validation Accuracy (for saving the model)
-        if va > best_va:
-            best_va, best_ep = va, HEAD_EPOCHS+e+1
-            best_st = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-            torch.save(best_st, sp)
-            m = " ★"
-            
-        print(f"  Epoch {HEAD_EPOCHS+e+1}/{total} — tl={tlo:.4f} ta={ta:.4f} vl={vlo:.4f} va={va:.4f}{m}")
+    print(f"\n--- Stage 2: Fine-tuning entire network [{ft_epochs} epochs] ---")
+    for p in model.parameters():
+        p.requires_grad = True
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR_FINETUNE)
 
-        # 2. Early Stopping Logic (Trigger only if BOTH train and val stop improving)
-        improved = False
-        if va >= max(hist["val_acc"][-patience:]): # Did val acc hit a new recent high?
-            improved = True
-        if ta > best_ta_ft:
-            best_ta_ft = ta
-            improved = True
-            
-        if improved:
-            stagnant_epochs = 0
-        else:
-            stagnant_epochs += 1
-            print(f"    -> No improvement in train/val acc. Patience: {stagnant_epochs}/{patience}")
-            
-        if stagnant_epochs >= patience:
-            print(f"\n  [Early Stopping] Triggered at epoch {HEAD_EPOCHS+e+1}. Training halted.")
-            break
+    for epoch in range(ft_epochs):
+        tloss, tacc = train_one_epoch(model, train_loader, criterion, optimizer, device, scaler)
+        vloss, vacc, _, _, _ = evaluate(model, val_loader, criterion, device)
+        _log_epoch(head_epochs + epoch + 1, total_epochs, tloss, tacc, vloss, vacc)
 
-    print(f"\n  ✓ Best val_acc={best_va:.4f} @ epoch {best_ep}")
-    model.load_state_dict(torch.load(sp, map_location=device, weights_only=True))
-    return hist
+    # ── Restore best weights ──
+    print(f"\n  ✓ Best val_acc: {best_val_acc:.4f} at epoch {best_epoch}")
+    print(f"  ✓ Restoring best weights from epoch {best_epoch}")
+    model.load_state_dict(torch.load(save_path, map_location=device, weights_only=True))
+    print(f"  ✓ Best model saved → {save_path}")
+
+    return history
 
 
 # =====================================================================
@@ -351,38 +317,83 @@ def print_classification_report(y_true, y_pred, label_columns, output_dir):
 
 
 def print_confidence_stats(y_true, y_pred, confs, label_columns, output_dir):
-    y_true = np.array(y_true); y_pred = np.array(y_pred); confs = np.array(confs)
-    lines = ["", "=" * 60, "Confidence Statistics by Class", "=" * 60, f"{'Class':>12s}  {'N':>5s}  {'Mean':>6s}  {'Std':>6s}  {'Min':>6s}  {'Max':>6s}", "-" * 60]
+    """Print and save per-class confidence statistics."""
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    confs  = np.array(confs)
+
+    lines = []
+    lines.append("")
+    lines.append("=" * 60)
+    lines.append("Confidence Statistics by Class")
+    lines.append("=" * 60)
+    lines.append(f"{'Class':>12s}  {'N':>5s}  {'Mean':>6s}  {'Std':>6s}  {'Min':>6s}  {'Max':>6s}")
+    lines.append("-" * 60)
+
     for i, cls in enumerate(label_columns):
         mask = y_pred == i
         if mask.sum() > 0:
             c = confs[mask]
-            lines.append(f"{cls:>12s}  {mask.sum():5d}  {c.mean():.4f}  {c.std():.4f}  {c.min():.4f}  {c.max():.4f}")
+            lines.append(
+                f"{cls:>12s}  {mask.sum():5d}  {c.mean():.4f}  "
+                f"{c.std():.4f}  {c.min():.4f}  {c.max():.4f}"
+            )
+
+    # Correct vs incorrect
     correct_mask = y_true == y_pred
     if correct_mask.sum() > 0:
         lines.append("")
         cc = confs[correct_mask]
-        lines.append(f"  Correct predictions   (n={correct_mask.sum():5d}):  mean conf = {cc.mean():.4f}")
+        ic = confs[~correct_mask]
+        lines.append(f"  Correct predictions   (n={correct_mask.sum():5d}):  "
+                     f"mean conf = {cc.mean():.4f}")
         if (~correct_mask).sum() > 0:
-            ic = confs[~correct_mask]
-            lines.append(f"  Incorrect predictions (n={(~correct_mask).sum():5d}):  mean conf = {ic.mean():.4f}")
+            lines.append(f"  Incorrect predictions (n={(~correct_mask).sum():5d}):  "
+                         f"mean conf = {ic.mean():.4f}")
     lines.append("=" * 60)
+
     report = "\n".join(lines)
     print(report)
-    with open(os.path.join(output_dir, "confidence_stats.txt"), "w") as f: f.write(report)
+    with open(os.path.join(output_dir, "confidence_stats.txt"), "w") as f:
+        f.write(report)
+    print(f"  ✓ Confidence stats → {output_dir}/confidence_stats.txt")
+
 
 def plot_confidence_distribution(y_true, y_pred, confs, label_columns, output_dir):
-    y_true = np.array(y_true); y_pred = np.array(y_pred); confs = np.array(confs)
+    """Plot confidence distribution for correct vs incorrect predictions."""
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    confs  = np.array(confs)
     correct = y_true == y_pred
+
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Overall: correct vs incorrect
     axes[0].hist(confs[correct], bins=30, alpha=0.7, label="Correct", color="green")
-    if (~correct).sum() > 0: axes[0].hist(confs[~correct], bins=30, alpha=0.7, label="Incorrect", color="red")
-    axes[0].set_title("Confidence: Correct vs Incorrect"); axes[0].set_xlabel("Confidence"); axes[0].set_ylabel("Count"); axes[0].legend(); axes[0].grid(True, alpha=0.3)
+    if (~correct).sum() > 0:
+        axes[0].hist(confs[~correct], bins=30, alpha=0.7, label="Incorrect", color="red")
+    axes[0].set_title("Confidence: Correct vs Incorrect")
+    axes[0].set_xlabel("Confidence")
+    axes[0].set_ylabel("Count")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+
+    # Per-class
     for i, cls in enumerate(label_columns):
         mask = y_pred == i
-        if mask.sum() > 0: axes[1].hist(confs[mask], bins=20, alpha=0.5, label=cls)
-    axes[1].set_title("Confidence by Predicted Class"); axes[1].set_xlabel("Confidence"); axes[1].set_ylabel("Count"); axes[1].legend(fontsize=7); axes[1].grid(True, alpha=0.3)
-    plt.tight_layout(); plt.savefig(os.path.join(output_dir, "confidence_distribution.png"), dpi=150); plt.close()
+        if mask.sum() > 0:
+            axes[1].hist(confs[mask], bins=20, alpha=0.5, label=cls)
+    axes[1].set_title("Confidence by Predicted Class")
+    axes[1].set_xlabel("Confidence")
+    axes[1].set_ylabel("Count")
+    axes[1].legend(fontsize=7)
+    axes[1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "confidence_distribution.png"), dpi=150)
+    plt.close()
+    print(f"  ✓ Confidence plot → {output_dir}/confidence_distribution.png")
+
 
 # =====================================================================
 # SECTION 6: GRAD-CAM

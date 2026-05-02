@@ -253,7 +253,7 @@ vlm_model.eval()
 2. **Add a VLM inference function** in `app.py`:
 
 ```python
-def generate_vlm_reasoning(original_b64, gradcam_b64, prediction, confidence, all_scores):
+clascdef generate_vlm_reasoning(original_b64, gradcam_b64, prediction, confidence, all_scores):
     """Generate clinical reasoning from the fine-tuned VLM."""
     messages = [
         {"role": "system", "content": "You are a clinical AI assistant..."},

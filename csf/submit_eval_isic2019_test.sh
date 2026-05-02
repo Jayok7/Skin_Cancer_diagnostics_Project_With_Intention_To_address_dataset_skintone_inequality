@@ -52,7 +52,7 @@ TEST_IMAGES="datasets/ISIC_2019_Test_Input"
 TEST_GT="datasets/ISIC_2019_Test_GroundTruth.csv"
 OUTPUT_DIR="outputs/isic2019_test_eval"
 
-# Model paths — adjust these to match your training output dirs
+# Model paths: adjust these to match your training output dirs
 MODEL_ORIG="outputs/isic2019_orig/best_efficientnet_b3_isic2019.pth"
 MODEL_AUG07="outputs/isic2019_aug07/best_efficientnet_b3_isic2019.pth"
 MODEL_AUG03="outputs/isic2019_aug03/best_efficientnet_b3_isic2019.pth"

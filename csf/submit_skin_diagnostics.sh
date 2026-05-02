@@ -36,7 +36,7 @@ mkdir -p logs
 source activate skin_tone_env 2>/dev/null || conda activate skin_tone_env
 pip install 'numpy<2' --quiet 2>/dev/null
 
-# ── Paths (matching CSF directory layout) ──
+# Paths (matching CSF directory layout)
 BASE_PATH="datasets/Ham10000"
 CSV_PATH="datasets/Ham10000/HAM10000_metadata.csv"
 OUTPUT_DIR="outputs/skin_cancer_diagnostics"
@@ -47,7 +47,7 @@ echo "CSV:       $CSV_PATH"
 echo "Output:    $OUTPUT_DIR"
 echo ""
 
-# ── Verify prerequisites ──
+#  Verify prerequisites 
 if [ ! -f "$CSV_PATH" ]; then
     echo "ERROR: HAM10000 metadata CSV not found at $CSV_PATH"
     exit 1

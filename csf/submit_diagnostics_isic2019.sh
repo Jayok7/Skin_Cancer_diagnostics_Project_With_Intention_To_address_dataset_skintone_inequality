@@ -11,7 +11,7 @@
 #SBATCH --error=logs/isic2019_%j.err
 
 # ================================================================
-# ISIC 2019 Diagnostics — EfficientNet-B3 (Augmented)
+# ISIC 2019 Diagnostics - EfficientNet-B3 (Augmented)
 # ================================================================
 # Trains EfficientNet-B3 on ISIC 2019 with optional skin-tone
 # augmented images. 40 epochs (20 head + 20 fine-tune).
@@ -69,10 +69,10 @@ fi
 # Check for augmented data (optional)
 AUG_FLAGS=""
 if [ -f "$AUG_MANIFEST" ]; then
-    echo "  Augmented data found — including in training"
+    echo "  Augmented data found - including in training"
     AUG_FLAGS="--aug-dir $AUG_DIR --aug-manifest $AUG_MANIFEST"
 else
-    echo "  No augmented data — training on original ISIC 2019 only"
+    echo "  No augmented data - training on original ISIC 2019 only"
 fi
 
 # ── Run ────────────────────────────────────────────────────

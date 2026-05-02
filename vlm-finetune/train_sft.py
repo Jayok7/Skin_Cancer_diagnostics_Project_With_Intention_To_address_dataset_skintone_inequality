@@ -27,7 +27,7 @@ Loss Masking:
   The DataCollator masks all tokens in the system and user turns 
   (label = -100). The model is trained ONLY on predicting the assistant's 
   response tokens.
-  Why: the user turn contains fixed input (images + CNN context) — training 
+  Why: the user turn contains fixed input (images + CNN context) - training 
   the model to predict this would waste capacity on a trivial copy task and 
   could cause the model to parrot user inputs rather than reason.
 """
@@ -63,13 +63,13 @@ import os
 # Model & Quantisation Configuration
 # ──────────────────────────────────────────────
 
-MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"  # Public model — no auth required
+MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"  # Public model - no auth required
 
 bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
-    bnb_4bit_quant_type="nf4",          # NormalFloat4 — optimal for normally-distributed weights
+    bnb_4bit_quant_type="nf4",          # NormalFloat4 - optimal for normally-distributed weights
     bnb_4bit_compute_dtype=torch.bfloat16,
-    bnb_4bit_use_double_quant=True,      # Quantises the quantisation constants — saves ~0.4GB
+    bnb_4bit_use_double_quant=True,      # Quantises the quantisation constants - saves ~0.4GB
 )
 
 print("Loading model with 4-bit quantisation...")
@@ -78,7 +78,7 @@ model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
     quantization_config=bnb_config,
     device_map="auto",
     torch_dtype=torch.bfloat16,
-    attn_implementation="sdpa",  # PyTorch native — no extra package needed
+    attn_implementation="sdpa",  # PyTorch native - no extra package needed
 )
 
 processor = AutoProcessor.from_pretrained(MODEL_ID)
@@ -92,17 +92,17 @@ model.config.use_cache = False  # Required for gradient checkpointing
 # ──────────────────────────────────────────────
 
 lora_config = LoraConfig(
-    r=64,                    # Rank — number of low-rank matrices
+    r=64,                    # Rank - number of low-rank matrices
     lora_alpha=128,          # Scaling factor (effective lr multiplier = alpha/r = 2.0)
     lora_dropout=0.05,       # Light dropout to prevent overfitting on small dataset
-    bias="none",             # Don't train biases — minimal impact, saves params
+    bias="none",             # Don't train biases - minimal impact, saves params
     task_type="CAUSAL_LM",
     target_modules=[
         "q_proj",            # Query projection  (attention)
         "k_proj",            # Key projection    (attention)
         "v_proj",            # Value projection   (attention)
         "o_proj",            # Output projection  (attention)
-        "gate_proj",         # Gate projection    (MLP — SwiGLU)
+        "gate_proj",         # Gate projection    (MLP - SwiGLU)
         "up_proj",           # Up projection      (MLP)
         "down_proj",         # Down projection    (MLP)
     ],
@@ -237,7 +237,7 @@ training_args = SFTConfig(
     
     # Learning rate
     learning_rate=2e-4,                   # Standard for QLoRA
-    lr_scheduler_type="cosine",           # Cosine decay — smooth convergence
+    lr_scheduler_type="cosine",           # Cosine decay - smooth convergence
     warmup_steps=20,                      # ~5% of typical run
     
     # Training duration

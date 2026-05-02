@@ -141,16 +141,16 @@ training_args = DPOConfig(
     output_dir="./checkpoints/dpo",
     
     # Batch size
-    per_device_train_batch_size=1,        # DPO processes pairs — memory intensive
+    per_device_train_batch_size=1,        # DPO processes pairs - memory intensive
     gradient_accumulation_steps=16,       # Effective batch size = 16
     
-    # Learning rate — lower than SFT to avoid catastrophic forgetting
+    # Learning rate - lower than SFT to avoid catastrophic forgetting
     learning_rate=5e-5,                   # 4x lower than SFT's 2e-4
     lr_scheduler_type="cosine",
     warmup_steps=10,                      # ~10% warmup
     
     # Training duration
-    num_train_epochs=2,                   # Fewer epochs — DPO converges faster
+    num_train_epochs=2,                   # Fewer epochs - DPO converges faster
     
     # Precision
     bf16=True,

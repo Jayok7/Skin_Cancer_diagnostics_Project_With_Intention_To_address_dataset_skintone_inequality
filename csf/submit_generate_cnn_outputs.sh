@@ -58,7 +58,7 @@ echo "  Images:   $IMAGE_DIR"
 echo "  Metadata: $METADATA"
 echo "  Output:   $OUTPUT_DIR"
 
-# ── Validate ───────────────────────────────────────────────
+# Validate 
 if [ ! -f "$MODEL_PATH" ]; then
     echo "ERROR: Model not found at $MODEL_PATH"
     exit 1
@@ -69,7 +69,7 @@ if [ ! -f "$METADATA" ]; then
     exit 1
 fi
 
-# ── Run ────────────────────────────────────────────────────
+# Run
 python generate_cnn_outputs.py \
     --model-path "$MODEL_PATH" \
     --image-dir "$IMAGE_DIR" \

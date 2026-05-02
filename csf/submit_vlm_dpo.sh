@@ -31,7 +31,7 @@ echo "Job ID: $SLURM_JOB_ID"
 cd ~/skin-cancer
 mkdir -p logs checkpoints/dpo
 
-# ── Environment ────────────────────────────────────────────
+#  Environment -----------------------------------------------
 module load apps/binapps/anaconda3/2021.11
 module load cuda/12.6.2
 
@@ -51,19 +51,19 @@ echo ""
 nvidia-smi
 echo ""
 
-# ── Validate ───────────────────────────────────────────────
+#  -- Validate -----------------------------------------------
 if [ ! -d "checkpoints/sft/final" ]; then
     echo "ERROR: SFT model not found at checkpoints/sft/final/"
     echo "  Run submit_vlm_sft.sh first."
     exit 1
 fi
 
-# ── Step 6: Generate DPO Pairs ──
+#  -- Step 6: Generate DPO Pairs ------------------------------
 echo ""
 echo "═══ Step 6: Generate DPO Pairs ═══"
 python generate_dpo_pairs.py
 
-# ── Step 7: DPO Training ──
+# -- Step 7: DPO Training --
 echo ""
 echo "═══ Step 7: DPO Training ═══"
 python train_dpo.py

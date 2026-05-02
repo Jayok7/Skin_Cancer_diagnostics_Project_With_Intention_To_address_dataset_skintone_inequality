@@ -3,7 +3,7 @@ teacher_generation_free.py
 FREE / OPEN-SOURCE version of the teacher generation pipeline.
 =============================================================
 Uses Qwen2.5-VL-7B-Instruct (open-source, Apache 2.0 licence) as the
-teacher model instead of GPT-4o.  Runs entirely locally on GPU — no API
+teacher model instead of GPT-4o.  Runs entirely locally on GPU - no API
 keys, no cost.
 
 Trade-offs vs. the GPT-4o version (teacher_generation.py):
@@ -262,7 +262,7 @@ def generate_all(cnn_outputs_path, output_path, max_samples=2500,
     
     total_time = time.time() - t0
     print(f'\n{"="*60}')
-    print(f'Teacher Generation Complete (FREE — {model_id})')
+    print(f'Teacher Generation Complete (FREE - {model_id})')
     print(f'{"="*60}')
     print(f'  Generated:  {len(results)} / {len(selected)} records')
     print(f'  Errors:     {errors}')
