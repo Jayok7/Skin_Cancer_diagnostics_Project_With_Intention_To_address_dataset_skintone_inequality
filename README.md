@@ -1,367 +1,542 @@
-# Equitable Skin Cancer Diagnostics with VLM-Guided Clinical Reasoning
 
-> A reproducible pipeline for building fair, interpretable skin cancer diagnostic systems — from skin tone classification through augmented training to VLM-based clinical reasoning.
+# Equitable Skin Cancer Diagnostics
 
-**Author:** Jamal Idrissou
+> An pipeline for **equitable skin cancer classification** that addresses the under-representation of darker skin tones in dermatological AI. The project spans skin-tone classification, dataset augmentation, diagnostic model training, Vision-Language Model (VLM) clinical reasoning, and a clinical decision-support GUI.
+
+---
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Repository Structure](#repository-structure)
+3. [Pipeline Stages](#pipeline-stages)
+   - [Stage 1 — Skin Tone Classification](#stage-1--skin-tone-classification)
+   - [Stage 2 — Skin Tone Augmentation](#stage-2--skin-tone-augmentation)
+   - [Stage 3 — Diagnostic Model Training](#stage-3--diagnostic-model-training)
+   - [Stage 4 — VLM Clinical Reasoning](#stage-4--vlm-clinical-reasoning)
+   - [Stage 5 — Clinical GUI](#stage-5--clinical-gui)
+   - [Stage 6 — External Validation](#stage-6--external-validation)
+4. [Experimental &amp; Legacy Scripts](#experimental--legacy-scripts)
+5. [Slurm / HPC Scripts](#slurm--hpc-scripts)
+6. [Datasets](#datasets)
+7. [Installation &amp; Requirements](#installation--requirements)
+8. [Hardware Requirements](#hardware-requirements)
+9. [Reproducibility](#reproducibility)
+10. [Citation](#citation)
+11. [License](#license)
 
 ---
 
 ## Overview
 
-This project addresses **diagnostic bias in dermatology AI** by building a complete pipeline that:
+Dermatological AI models are overwhelmingly trained on light-skinned populations, leading to disparate performance on darker skin tones. This project builds a **fairness-aware pipeline** that:
 
-1. **Classifies skin tone** using the Monk Skin Tone (MST) scale via an EfficientNet-B4 model trained on a merged FairFace and UTKFace dataset
-2. **Augments underrepresented skin tones** using UNET-Skin transplant + Poisson blending (configurable λ ratio)
-3. **Trains diagnostic models** (EfficientNet-B3) on balanced datasets and evaluates fairness across skin tones
-4. **Generates clinical reasoning** using a Vision-Language Model (Qwen2.5-VL-7B) fine-tuned with SFT + DPO
-5. **Provides a clinical GUI** for real-time lesion analysis with Grad-CAM visualisation and VLM reasoning
-
-```
-  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-  │  ISIC 2019   │────▶│  Skin Tone   │────▶│  Tone-Aware  │
-  │  25k images  │     │  Classifier  │     │ Augmentation │
-  └──────────────┘     └──────────────┘     └──────┬───────┘
-                                                   │
-  ┌──────────────┐     ┌──────────────┐     ┌──────▼───────┐
-  │  Clinical    │◀────│  SFT + DPO   │◀────│  Diagnostic  │
-  │  GUI App     │     │  Fine-Tuning │     │  EfficientNet│
-  └──────────────┘     └──────────────┘     └──────────────┘
-```
+1. **Classifies skin tone** on dermoscopic images using a lesion-aware cascade (ITA analytical + EfficientNet-B4 CNN).
+2. **Augments under-represented tones** via Reinhard LAB colour transfer, Poisson deep blending, U-Net lesion-aware transplantation, and neural style transfer.
+3. **Trains diagnostic models** (EfficientNet-B3) on balanced datasets (HAM10000 & ISIC 2019).
+4. **Fine-tunes a Vision-Language Model** (Qwen2.5-VL-7B) with SFT + DPO to produce grounded clinical reasoning from both the image and its Grad-CAM heatmap.
+5. **Deploys a clinical GUI** (Flask + HTML/CSS/JS) with real-time Grad-CAM explainability and VLM diagnostic reasoning.
 
 ---
 
 ## Repository Structure
 
 ```
-├── datasets/
-│   ├── compute_fairface_labels.py            # Computes MST labels for FairFace via ITA
-│   ├── compute_utkface_mst_labels.py         # Computes MST labels for UTKFace via ITA
-│   ├── clean_fairface_labels.py              # Cleans erroneous label computations
-│   └── merge_mst_datasets.py                 # Merges FairFace and UTKFace labels into master
+.
+├── skin-tone-classifier/          # Stage 1: Skin tone classification
+│   ├── train_fairface.py          #   EfficientNet-B4 trainer (FairFace + MSKCC fine-tune)
+│   ├── classify_skin_tone.py      #   Lesion-aware A+B+C cascade inference pipeline
+│   ├── evaluate_predictions_vs_mst_raters.py  # Eval against MSKCC human raters
+│   ├── fairface_dataset.py        #   PyTorch Dataset for FairFace (class-aware augmentation)
+│   └── mskcc_dataset.py           #   PyTorch Dataset for MSKCC (3-tier augmentation)
 │
-├── skin-tone-classifier/
-│   ├── fairface_dataset.py                   # PyTorch dataset for FairFace
-│   ├── mskcc_dataset.py                      # PyTorch dataset for MSKCC
-│   ├── train_fairface.py                     # Train MST classifier (EfficientNet-B4)
-│   ├── classify_skin_tone.py                 # Inference: label images with skin tone
-│   └── evaluate_predictions_vs_mst_raters.py # Evaluate against human raters
+├── skin-tone-augmentation/        # Stage 2: Dataset balancing
+│   ├── skin_tone_augmentation.py  #   V1: Reinhard CIE-LAB + Poisson deep blending (λ-controlled)
+│   ├── skin_tone_augmentation_v2.py #  V2: U-Net lesion-aware transplant + Poisson blending
+│   ├── skin_tone_transfer.py      #   Reinhard-only colour transfer (standalone)
+│   └── submit_skin_augmentation_v2_*.sh  # Slurm scripts for λ sweep (0.0, 0.3, 0.7, 1.0)
 │
-├── skin-augmentation/
-│   ├── skin_tone_augmentation.py             # Reinhard + Poisson blending with QC filter
-│   ├── skin_tone_augmentation_v2.py          # Advanced augmentation using U-Net (fine-tuned on ISIC 2018)
-│   └── skin_tone_transfer.py                 # Core colour transfer algorithms
+├── diagnostics/                   # Stage 3: Diagnostic model training & evaluation
+│   ├── skin_cancer_diagnostics.py #   HAM10000 EfficientNet-B3 trainer + Grad-CAM
+│   ├── skin_cancer_diagnostics_isic2019.py  # ISIC 2019 EfficientNet-B3 trainer
+│   ├── evaluate_isic2019_test.py  #   Multi-model test-set evaluation framework
+│   └── *.ipynb                    #   Exploratory notebooks
 │
-├── diagnostics/
-│   ├── skin_cancer_diagnostics_isic2019.py   # Train EfficientNet-B3 (8-class ISIC 2019)
-│   └── evaluate_isic2019_test.py             # Compare original vs augmented models
+├── vlm-finetune/                  # Stage 4: Vision-Language Model fine-tuning
+│   ├── generate_cnn_outputs.py    #   Generate CNN predictions + Grad-CAM for teacher input
+│   ├── teacher_generation.py      #   Teacher reasoning via OpenAI GPT-4o API
+│   ├── teacher_generation_free.py #   Teacher reasoning via local Qwen2.5-VL-7B-Instruct
+│   ├── quality_control.py         #   5-stage QC filter (keywords, spatial, safety, length)
+│   ├── qc_reference.py            #   Earlier 3-stage QC reference implementation
+│   ├── format_dataset.py          #   Convert cleaned data → chat-template JSONL
+│   ├── generate_dpo_pairs.py      #   Build preference pairs for DPO training
+│   ├── train_sft.py               #   QLoRA supervised fine-tuning
+│   ├── train_dpo.py               #   DPO alignment training
+│   ├── evaluate.py                #   SFT vs DPO evaluation across quality dimensions
+│   └── summary.md                 #   VLM pipeline overview & cost estimates
 │
-├── vlm-finetune/
-│   ├── generate_cnn_outputs.py               # EfficientNet inference + Grad-CAM
-│   ├── teacher_generation_free.py            # Qwen2.5-VL teacher reasoning (free)
-│   ├── quality_control.py                    # 5-stage QC pipeline
-│   ├── format_dataset.py                     # Convert to JSONL for SFT
-│   ├── train_sft.py                          # QLoRA SFT on Qwen2.5-VL-7B
-│   ├── generate_dpo_pairs.py                 # Preference pair generation
-│   ├── train_dpo.py                          # DPO alignment training
-│   └── evaluate.py                           # SFT vs DPO comparison
+├── gui/                           # Stage 5: Clinical decision-support interface
+│   ├── app.py                     #   Flask backend (CNN + Grad-CAM + VLM inference)
+│   ├── index.html                 #   Frontend markup
+│   ├── style.css                  #   Premium UI styling (glassmorphism, dark mode)
+│   ├── script.js                  #   Frontend logic (upload, display, API calls)
+│   ├── requirements.txt           #   GUI-specific dependencies
+│   ├── CNNs/                      #   Diagnostic model checkpoints directory
+│   └── checkpoints/               #   VLM checkpoint directory
 │
-├── gui/
-│   ├── app.py                                # Flask backend (inference + Grad-CAM)
-│   ├── index.html                            # Clinical interface
-│   ├── style.css                             # Styling
-│   ├── script.js                             # Frontend logic
-│   └── requirements.txt                      # GUI-specific dependencies
+├── External-validation/           # Stage 6: Empirical validation battery
+│   ├── ISIC2019_Internal_baseline/  # Internal baseline tone-stratified evaluation
+│   │   ├── evaluate_tone_stratified.py  # Tests 2–5 on ISIC 2019 test set
+│   │   └── submit_tone_stratified_eval_novig.sh  # Vignette-sensitivity Slurm script
+│   ├── Fitzpatrick17k/              # External validation on Fitzpatrick17k
+│   │   ├── generate_fitzpatrick_predictions.py  # Stage 1: GPU inference per model
+│   │   ├── evaluate_fitzpatrick_stratified.py   # Stage 2: Tests 2–5 evaluation
+│   │   └── submit_fitzpatrick_stratified.sh     # Slurm script (both mapping arms)
+│   ├── MILK10K/                     # External validation on MILK10K
+│   │   ├── generate_milk10k_predictions.py  # Stage 1: GPU inference per model
+│   │   ├── evaluate_milk10k_stratified.py   # Stage 2: Tests 2–5 evaluation
+│   │   └── submit_milk10k_stratified.sh     # Slurm script (both mapping arms)
+│   └── Tests.md                     # Full test battery specification (Tests 1–6)
 │
-├── csf/                                      # Slurm submission scripts
-│   ├── submit_skin_augmentation.sh
-│   ├── submit_diagnostics_isic2019.sh
-│   ├── submit_teacher_generation.sh
-│   ├── submit_vlm_sft.sh
-│   ├── submit_vlm_dpo.sh
-│   └── ...
-│
-└── README.md
+├── csf/                           # Slurm job scripts for CSF3 HPC cluster (20 scripts)
+├── neural_style_transfer.py       # Experimental: VGG-19 neural style transfer augmentation
+├── requirements.txt               # Root-level Python dependencies
+├── .gitignore                     # Excludes datasets, models, outputs, venvs
+└── README.md                      # Original README
 ```
+
+> **Note:** Several experimental/legacy scripts exist in the project root (see [Experimental &amp; Legacy Scripts](#experimental--legacy-scripts)). These are not part of the core pipeline but are retained for reproducibility of exploratory work.
 
 ---
 
-## Pipeline
+## Pipeline Stages
 
-### Stage 1: Dataset Generation and Skin Tone Classification
+### Stage 1 — Skin Tone Classification
 
-To ensure generalizability, we build a robust, varied skin tone dataset by merging FairFace and UTKFace, labeling them algorithmically using Individual Typology Angle (ITA) mapped to the Monk Skin Tone (MST) scale.
+**Goal:** Assign a Monk Skin Tone (MST) label to every dermoscopic image so the dataset can be stratified and balanced.
 
-**1. Label Computing & Dataset Merging:**
+#### Training (`train_fairface.py`)
 
-```bash
-# Compute MST labels for FairFace
-python compute_fairface_labels.py
+| Detail                      | Value                                                                |
+| --------------------------- | -------------------------------------------------------------------- |
+| **Backbone**          | EfficientNet-B4 (ImageNet pretrained)                                |
+| **Training data**     | FairFace (86k face images with L\*-based labels)                     |
+| **Fine-tune data**    | MSKCC perilesional crops (680 images, MST-rated)                     |
+| **Loss**              | Ordinal Cross-Entropy (penalises far-off predictions more heavily)   |
+| **Class balancing**   | `WeightedRandomSampler` + 3-tier class-aware augmentation          |
+| **Outputs**           | 3-way (Dark / Medium / Light) or 5-way (MST-5) checkpoint            |
+| **Key design choice** | Ordinal loss chosen over standard CE because MST is an ordered scale |
 
-# Compute MST labels for UTKFace
-python compute_utkface_mst_labels.py
+**Dataset helpers:**
 
-# Clean erroneous FairFace labels
-python clean_fairface_labels.py
+- `fairface_dataset.py` — PyTorch Dataset with class-aware augmentation (minority classes get stronger transforms).
+- `mskcc_dataset.py` — PyTorch Dataset with 3-tier augmentation strategy (standard → minority → severe minority) and √-balanced sampling to prevent memorisation.
 
-# Merge the datasets into master_mst_labels.csv
-python merge_mst_datasets.py
-```
+#### Inference (`classify_skin_tone.py`)
 
-**2. Train Skin Tone Classifier:**
-Trains an EfficientNet-B4 model on the merged MST labels using Ordinal Cross-Entropy loss. Supports fine-tuning on MSKCC. This stage also leverages a U-Net model fine-tuned on ISIC 2018 for lesion segmentation to assist in classification and fine-tuning.
+A **lesion-aware A+B+C cascade** that avoids contamination from the lesion and dermoscopic vignette:
 
-```bash
-# Train the classifier
-python train_fairface.py \
-    --data-csv datasets/master_mst_labels.csv \
-    --image-root datasets/ \
-    --output-dir outputs/fairface/
+| Approach    | Method                                                           | When Used                  |
+| ----------- | ---------------------------------------------------------------- | -------------------------- |
+| **A** | Perilesional ring (U-Net segmentation → dilate → ring mask)    | Default; requires U-Net    |
+| **B** | Multi-patch consensus (corner/edge patches, IQR outlier removal) | Fallback if ring too small |
+| **C** | Full-image (vignette-cropped, median-painted border)             | Last resort                |
 
-# Label ISIC 2019 images with skin tone
-python classify_skin_tone.py \
-    --model outputs/fairface_mskcc_best.pth \
-    --images datasets/ISIC_2019_Training_Input \
-    --output outputs/isic2019_skin_tone_labels.csv
-```
+All approaches are **vignette-aware**: a black-border mask is computed once and propagated through every sampling stage.
 
-**Key finding**: ISIC 2019 distribution — Light: 41%, Medium: 58%, **Dark: 0.4%**
+Supports both **ITA analytical** (L\*a\*b\* → ITA angle → MST bin) and **CNN** (EfficientNet-B4 softmax) modes.
 
----
+#### Evaluation (`evaluate_predictions_vs_mst_raters.py`)
 
-### Stage 2: Skin Tone Augmentation
+Evaluates CNN predictions against MSKCC human raters (Rater 1 & Rater 2), computing:
 
-Generates synthetic dark-skin-tone images to balance the training set using two methods:
-
-| Method                         | λ Control         | What it does                                                             |
-| ------------------------------ | ------------------ | ------------------------------------------------------------------------ |
-| **UNET Skin Transplant** | λ proportion      | Lesion-aware segmentation - augments healthy skin, preserves core lesion |
-| **Poisson Blending**     | 1 − λ proportion | Gradient-domain - better texture, slower                                |
-
-```bash
-# Generate augmented images (λ=0.7 → 70% Skin Transplant, 30% Poisson)
-python skin-augmentation/skin_tone_augmentation_v2.py \
-    --source-dir datasets/ISIC_2019_Training_Input \
-    --labels outputs/isic2019_skin_tone_labels.csv \
-    --output-dir datasets/ISIC_2019_Augmented \
-    --lambda-ratio 0.7
-```
-
-**Quality filter**: Dual-region (border + central) realism gate checking hue, saturation, and patchiness. Iterates up to 4 cycles with 1.5× oversampling to meet targets despite rejections.
-
-**Advanced Augmentation (v2)**: The pipeline includes an advanced script (`skin-augmentation/skin_tone_augmentation_v2.py`) which uses a U-Net segmentation model fine-tuned on the ISIC 2018 dataset. This ensures that only healthy perilesional skin is augmented while keeping the core lesion intact, further preserving critical diagnostic morphology.
+- Exact accuracy and relaxed accuracy (±1 class)
+- Per-method and per-confidence breakdowns
+- Confusion matrices and side-by-side MST count bar charts
 
 ---
 
-### Stage 3: Diagnostic Model Training
+### Stage 2 — Skin Tone Augmentation
 
-Trains EfficientNet-B3 on ISIC 2019 (8-class) with optional augmented data integration.
+**Goal:** Balance the skin-tone distribution so diagnostic models train on equitable data.
 
-```bash
-# Train on original data only
-python diagnostics/skin_cancer_diagnostics_isic2019.py \
-    --gt datasets/ISIC_2019_Training_GroundTruth.csv
+Three complementary augmentation methods are provided:
 
-# Compare original vs augmented models on official test set (8238 images)
-python diagnostics/evaluate_isic2019_test.py \
-    --model-orig  outputs/isic2019_orig/best_efficientnet_b3_isic2019.pth \
-    --model-aug07 outputs/isic2019_aug07/best_efficientnet_b3_isic2019.pth \
-    --model-aug03 outputs/isic2019_aug03/best_efficientnet_b3_isic2019.pth
-```
+#### V1: Reinhard + Deep Blending (`skin_tone_augmentation.py`)
 
-Generates per-model confusion matrices and a side-by-side comparison chart.
+A **λ-controlled hybrid** pipeline:
 
----
+- **λ = 1.0** → 100% Reinhard CIE-LAB colour transfer (fast, preserves spatial structure)
+- **λ = 0.0** → 100% Poisson deep blending (`cv2.seamlessClone`, preserves lesion gradients)
+- **λ = 0.7** (default) → 70/30 mix
 
-### Stage 4: VLM Clinical Reasoning
+Includes a **quality gate** that rejects unrealistic augmentations by checking:
 
-Generates and refines clinical diagnostic reasoning using a vision-language model.
+- Skin hue plausibility (HSV border + centre analysis)
+- Saturation bounds (rejects neon/oversaturated)
+- LAB a\*/b\* range (rejects colour casts)
+- Colour variance (rejects patchy multi-colour artifacts)
 
-**Teacher–Student setup:**
+Uses **iterative generate→filter→retry cycles** (up to 4) with 1.5× oversampling to compensate for QC rejections. Tracks λ drift per class and warns if actual ratio deviates >5%.
 
-- **Teacher**: Qwen2.5-VL-7B-Instruct (open-source, generates training data).
-  *Note: A commercial GPT-4o teacher pipeline is also available for higher-quality reference generations. Deploying GPT-4o as a teacher costs roughly $0.005 to $0.01 per lesion depending on the context length and resolution.*
-- **Student**: Qwen2.5-VL-7B-Instruct (fine-tuned via SFT → DPO)
+#### V2: U-Net Lesion-Aware Transplant (`skin_tone_augmentation_v2.py`)
 
-The VLM receives **both** the original dermoscopic image and the Grad-CAM heatmap overlay, ensuring clinical reasoning is grounded in lesion morphology and model attention patterns.
+The refined pipeline for the final experiments:
 
-```bash
-# 1. Generate CNN outputs + Grad-CAM heatmaps
-python vlm-finetune/generate_cnn_outputs.py
+- U-Net segments the lesion from a source image
+- The lesion is transplanted onto a different-skin-tone reference image using Poisson blending
+- Preserves lesion morphology (ABCD features) while adopting the reference skin colour/texture
+- Slurm scripts provided for λ sweep: `submit_skin_augmentation_v2_{00,03,07,10}.sh`
 
-# 2. Generate teacher reasoning (Qwen2.5-VL, free, local GPU)
-python vlm-finetune/teacher_generation_free.py
+#### Standalone Reinhard Transfer (`skin_tone_transfer.py`)
 
-# 3. Quality control — 5-stage filter
-#    (keyword, indeterminate, spatial/Grad-CAM, length, safety)
-python vlm-finetune/quality_control.py
+A lightweight Reinhard-only tool for quick colour transfer:
 
-# 4. Format for training
-python vlm-finetune/format_dataset.py
+- Computes per-class LAB statistics from a predictions CSV
+- Supports manual transfer (source class → target class), auto-balance, and preview mode
+- Multi-reference averaging (samples N references to reduce per-image noise)
 
-# 5. SFT training (QLoRA, 4-bit on Qwen2.5-VL-7B)
-python vlm-finetune/train_sft.py
+#### Neural Style Transfer (`neural_style_transfer.py`) *(Experimental)*
 
-# 6. Generate DPO preference pairs
-python vlm-finetune/generate_dpo_pairs.py
+VGG-19 Gatys et al. style transfer applied to dermoscopic images:
 
-# 7. DPO alignment training
-python vlm-finetune/train_dpo.py
-
-# 8. Evaluate SFT vs DPO
-python vlm-finetune/evaluate.py
-```
+- Transfers skin texture/colour from dark-skin references onto light-skin lesion images
+- Uses LBFGS optimisation (300 steps default, α=1 content, β=1e6 style)
+- Optional CSV filtering to enforce Light/Medium → Dark direction
+- **Status:** Experimental. Not used in the final pipeline due to higher computational cost and less controllable output compared to Reinhard/Poisson methods.
 
 ---
 
-### Stage 5: Clinical GUI
+### Stage 3 — Diagnostic Model Training
 
-A web-based clinical interface for real-time lesion analysis.
+**Goal:** Train a skin cancer classifier and evaluate fairness across skin tones.
 
-**Three-panel display:**
+#### HAM10000 (`diagnostics/skin_cancer_diagnostics.py`)
 
-1. **Original Image** — the uploaded dermoscopic photograph
-2. **Grad-CAM Overlay** — heatmap showing model attention regions
-3. **VLM Reasoning** — clinical diagnostic paragraph from the fine-tuned VLM
+| Detail             | Value                                                                                                    |
+| ------------------ | -------------------------------------------------------------------------------------------------------- |
+| **Model**    | EfficientNet-B3 (ImageNet pretrained)                                                                    |
+| **Dataset**  | HAM10000 (7 diagnostic categories)                                                                       |
+| **Head**     | BatchNorm → Dense(256) → ReLU → Dropout(0.4) → Dense(7)                                              |
+| **Training** | 2-stage: 20 epochs head-only (lr=1e-3) + 20 epochs full fine-tune (lr=1e-5)                              |
+| **Loss**     | CrossEntropy with label smoothing (0.1)                                                                  |
+| **Outputs**  | Training curves, confusion matrix, classification report, confidence statistics, Grad-CAM visualisations |
+
+#### ISIC 2019 (`diagnostics/skin_cancer_diagnostics_isic2019.py`)
+
+Same architecture adapted for the larger ISIC 2019 dataset (8 diagnostic categories, 25k+ images). Includes augmented-data integration for fairness experiments.
+
+#### Multi-Model Evaluation (`diagnostics/evaluate_isic2019_test.py`)
+
+Comprehensive evaluation framework that:
+
+- Compares multiple model checkpoints on the ISIC 2019 test set
+- Generates per-class metrics, confidence statistics, and comparison reports
+- Produces publication-ready plots and LaTeX-compatible tables
+
+---
+
+### Stage 4 — VLM Clinical Reasoning
+
+**Goal:** Fine-tune Qwen2.5-VL-7B to produce grounded clinical reasoning that explains *why* the CNN made its prediction, anchored to both the dermoscopic image and the Grad-CAM heatmap.
+
+#### Pipeline Flow
+
+```
+CNN Predictions + Grad-CAM  ──►  Teacher Generation  ──►  Quality Control
+       │                              │                         │
+  generate_cnn_outputs.py    teacher_generation*.py      quality_control.py
+                                                                │
+                                                          ▼
+                                                    format_dataset.py
+                                                          │
+                                          ┌───────────────┼───────────────┐
+                                          ▼               ▼               ▼
+                                     train_sft.py   generate_dpo_pairs.py
+                                          │               │
+                                          ▼               ▼
+                                    SFT checkpoint   train_dpo.py
+                                                          │
+                                                          ▼
+                                                   DPO checkpoint
+                                                          │
+                                                     evaluate.py
+```
+
+#### Step 1: Generate CNN Outputs (`generate_cnn_outputs.py`)
+
+Runs the diagnostic CNN on all images, saving predictions, confidence scores, Grad-CAM heatmaps, and spatial activation regions.
+
+#### Step 2: Teacher Generation
+
+Two approaches provided:
+
+- **`teacher_generation.py`** — Uses OpenAI GPT-4o API. Higher quality but costs ~$50–75 for 2,500 samples.
+- **`teacher_generation_free.py`** *(recommended)* — Uses local Qwen2.5-VL-7B-Instruct. Free, stylistically consistent with the student model, Apache 2.0 licensed.
+
+Both generate structured clinical reasoning that references specific visual features and their spatial locations relative to the Grad-CAM activation pattern.
+
+#### Step 3: Quality Control (`quality_control.py`)
+
+A **5-stage filtering pipeline** (expected discard rate: 20–30%):
+
+| Stage | Check                | Purpose                                                                       |
+| ----- | -------------------- | ----------------------------------------------------------------------------- |
+| 1     | Keyword constraint   | Catches gross factual errors (e.g., melanoma prediction described as angioma) |
+| 2     | Indeterminate filter | Discards hedged non-answers ("cannot be determined")                          |
+| 3     | Spatial alignment    | Verifies text spatial references match Grad-CAM activation regions            |
+| 4     | Length bounds        | Ensures 60–200 words per response                                            |
+| 5     | Safety language      | Requires hedging phrases, rejects definitive diagnostic claims                |
+
+An earlier **3-stage reference implementation** is preserved in `qc_reference.py`.
+
+#### Step 4: Format Dataset (`format_dataset.py`)
+
+Converts cleaned training data into chat-template JSONL for VLM fine-tuning, with multi-image input (original + Grad-CAM overlay).
+
+#### Step 5: Training
+
+| Phase         | Script           | Method                             | Key Config                                                            |
+| ------------- | ---------------- | ---------------------------------- | --------------------------------------------------------------------- |
+| **SFT** | `train_sft.py` | QLoRA (4-bit NF4, rank 64, α 128) | Token masking on assistant responses only; bf16 mixed precision       |
+| **DPO** | `train_dpo.py` | Direct Preference Optimisation     | β=0.1; preference pairs from QC scores via `generate_dpo_pairs.py` |
+
+#### Step 6: Evaluation (`evaluate.py`)
+
+Compares SFT and DPO checkpoints across diagnostic quality dimensions using automated metrics and side-by-side analysis.
+
+---
+
+### Stage 5 — Clinical GUI
+
+**Goal:** A clinician-facing web interface for real-time skin lesion analysis with explainable AI.
+
+#### Architecture
+
+| Component            | Technology                                                                     |
+| -------------------- | ------------------------------------------------------------------------------ |
+| **Backend**    | Flask (`app.py`) — loads CNN models, generates Grad-CAM, runs VLM inference |
+| **Frontend**   | HTML (`index.html`) + CSS (`style.css`) + JS (`script.js`)               |
+| **CNN Models** | Loaded from `gui/CNNs/` directory (multiple checkpoint support)              |
+| **VLM**        | Qwen2.5-VL-7B loaded from `gui/checkpoints/` (DPO checkpoint)                |
+
+#### Features
+
+- **Multi-model support:** Select from available diagnostic checkpoints via dropdown
+- **Three-panel results view:** Original image, Grad-CAM heatmap, diagnostic reasoning
+- **Classification scores:** All class probabilities displayed with confidence bars
+- **Dark mode / light mode:** Theme toggle with premium glassmorphism styling
+- **Drag-and-drop upload:** Supported image formats: PNG, JPG, JPEG
+- **Medical disclaimer:** Prominent clinical decision-support disclaimer
+
+#### Running the GUI
 
 ```bash
-cd gui/
+cd gui
 pip install -r requirements.txt
 python app.py
-# Open http://localhost:5000
+# Open http://localhost:5000 in your browser
 ```
 
-#### Integrating VLM Output
+> **VLM Setup:** Set `os.environ["HF_HOME"]` in `app.py` to a valid local directory for model caching. Place the DPO checkpoint in `gui/checkpoints/`. The VLM requires ~16 GB VRAM (GPU) or will fall back to CPU with degraded performance.
 
-The GUI currently uses a placeholder for VLM text. To connect the fine-tuned VLM:
+---
 
-1. **Load the model** in `app.py` alongside the diagnostic model:
+### Stage 6 — External Validation
 
-```python
-from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-from peft import PeftModel
+**Goal:** Rigorously evaluate whether the augmentation pipeline's fairness improvements generalise beyond the ISIC 2019 training distribution, using independent external datasets with ground-truth skin tone labels.
 
-vlm_processor = AutoProcessor.from_pretrained("./checkpoints/dpo/final")
-vlm_base = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-    "Qwen/Qwen2.5-VL-7B-Instruct",
-    torch_dtype=torch.bfloat16,
-    device_map="auto",
-)
-vlm_model = PeftModel.from_pretrained(vlm_base, "./checkpoints/dpo/final")
-vlm_model.eval()
-```
+The validation battery implements **Tests 2–5** from the empirical-rigour specification (`Tests.md`), applied consistently across three evaluation arms:
 
-2. **Add a VLM inference function** in `app.py`:
+#### Evaluation Arms
 
-```python
-clascdef generate_vlm_reasoning(original_b64, gradcam_b64, prediction, confidence, all_scores):
-    """Generate clinical reasoning from the fine-tuned VLM."""
-    messages = [
-        {"role": "system", "content": "You are a clinical AI assistant..."},
-        {"role": "user", "content": [
-            {"type": "image", "image": original_b64},
-            {"type": "image", "image": gradcam_b64},
-            {"type": "text", "text": f"Predicted: {prediction} ({confidence:.1%})..."}
-        ]}
-    ]
-    inputs = vlm_processor.apply_chat_template(messages, return_tensors="pt")
-    outputs = vlm_model.generate(**inputs, max_new_tokens=256)
-    return vlm_processor.decode(outputs[0], skip_special_tokens=True)
-```
+| Arm                         | Dataset                                       | Tone Labels                                       | Purpose                                                                             |
+| --------------------------- | --------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **Internal baseline** | ISIC 2019 test set                            | CNN-predicted MST (3-class)                       | Confirms augmentation effects on held-out data from the training distribution       |
+| **Fitzpatrick17k**    | Fitzpatrick17k (clinical photos, 16k+ images) | Fitzpatrick Scale I–VI (human-rated, two raters) | External generalisability on a dataset with dermatologist-assigned skin type labels |
+| **MILK10K**           | MILK10K (Harvard, 10k+ images)                | 6-level skin tone class (inverted scale)          | Second independent external dataset with diverse imaging sources                    |
 
-3. **Replace the mock text** in `script.js` (line 197):
+#### Two-Stage Architecture
 
-```diff
-- const mockedVLM = "Upon dermoscopic evaluation...";
-- document.getElementById('vlmOutput').textContent = mockedVLM;
-+ document.getElementById('vlmOutput').textContent = data.vlm_reasoning;
-```
+Each arm follows the same two-stage pattern:
 
-4. **Add VLM output to the `/predict` response** in `app.py`:
+**Stage 1 — Prediction Generation (GPU):** Run all five EfficientNet-B3 model variants (baseline + four λ-augmented) on the target dataset. Outputs per-model prediction CSVs with full softmax probabilities.
 
-```diff
-  return jsonify({
-      'success': True,
-      ...
-+     'vlm_reasoning': vlm_text,
-  })
-```
+- `generate_fitzpatrick_predictions.py` — Fitzpatrick17k predictions with HIERARCHY or STRICT label-mapping arms
+- `generate_milk10k_predictions.py` — MILK10K predictions with DIAGNOSIS3 or SIMPLIFIED label-mapping arms
+- ISIC 2019 internal baseline reuses existing predictions from Stage 3
+
+**Stage 2 — Stratified Evaluation (CPU):** Consume prediction CSVs and run the full test battery.
+
+#### Test Battery
+
+| Test         | Name                                   | Method                                                                                                         | Purpose                                                                                           |
+| ------------ | -------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **2**  | Tone-stratified diagnostics            | Per-model × per-tone-tertile: macro F1, per-class F1, per-class recall, macro AUC                             | Headline fairness result — the 5 × 3 grid of performance across skin tones                      |
+| **3**  | Bootstrap confidence intervals         | 1,000-iteration resampling → 95% CI on macro F1                                                               | Quantifies uncertainty on small subsets (especially Dark); error bars for claims                  |
+| **4**  | McNemar's paired test                  | 2 × 2 contingency table per (baseline vs λ=k) pair, per tone                                                 | Tests whether augmentation shifts*which* images are correctly classified, not just reshuffling  |
+| **5a** | Class composition audit                | Diagnostic-class distribution by tone tertile                                                                  | Detects confound: if Dark subset is 80% naevus, class-specific gains masquerade as fairness gains |
+| **5b** | Source/site confounder                 | Image source distribution by tone tertile                                                                      | Detects imaging-protocol confound (e.g., Dark images clustering from one clinical site)           |
+| **5c** | Confidence/rater-agreement sensitivity | Re-run Tests 2–3 at stricter tone confidence ≥ 0.8 (ISIC 2019) or on rater-agreement subset (Fitzpatrick17k) | Controls for tone-label noise                                                                     |
+| **5d** | Label-mapping sensitivity              | Re-run with alternate diagnosis → ISIC-class mapping                                                          | Tests robustness to taxonomy choices                                                              |
+
+#### Key Design Choices
+
+- **Dual-mapping arms:** Both Fitzpatrick17k (HIERARCHY vs STRICT) and MILK10K (DIAGNOSIS3 vs SIMPLIFIED) run two independent label-mapping strategies, testing whether conclusions survive taxonomy differences.
+- **Vignette sensitivity (ISIC 2019):** A `--require-no-vignette` flag excludes images with dermoscopic vignette artifacts, controlling for the site/equipment confound.
+- **McNemar's paired test:** Provides a stronger claim than unpaired bootstrap CIs — it tests on the *same images* whether model A and model B disagree systematically.
+- **Either outcome is defensible:** If CIs overlap, the project argues that existing test data cannot adequately evaluate fairness — itself a central thesis.
+
+---
+
+## Experimental & Legacy Scripts
+
+The following scripts in the project root are **not part of the core pipeline** but are retained for reproducibility:
+
+| Script                          | Purpose                                                 |
+| ------------------------------- | ------------------------------------------------------- |
+| `neural_style_transfer.py`    | VGG-19 Gatys-style transfer (experimental augmentation) |
+| `classify_isic2020.py`        | ISIC 2020 skin tone classification (earlier dataset)    |
+| `label_skin_tone.py`          | Legacy labelling script (3-class)                       |
+| `label_isic2018.py`           | ISIC 2018 labelling utility                             |
+| `diagnose_dark_medium.py`     | Diagnostic analysis by skin tone subgroup               |
+| `diagnose_mskcc_finetune.py`  | MSKCC fine-tuning diagnostics                           |
+| `evaluate_mskcc_cnn.py`       | MSKCC CNN evaluation                                    |
+| `extract_embeddings.py`       | Feature embedding extraction                            |
+| `visualise_latent_space.py`   | t-SNE/UMAP latent space plots                           |
+| `prepare_mskcc_labels.py`     | MSKCC label preparation                                 |
+| `preprocess_mskcc_crops.py`   | MSKCC perilesional crop preprocessing                   |
+| `train_fitzpatrick.py`        | Legacy Fitzpatrick classifier trainer                   |
+| `style_transfer_test.py`      | Neural style transfer experiments                       |
+| `stylegan_augmentation.py`    | StyleGAN-based augmentation (prototype)                 |
+| `MSKCC_Advanced_Eval_Cell.py` | Advanced evaluation utilities                           |
+| `analyze_dataset.py`          | Dataset statistics                                      |
+
+**Notebooks** (various `.ipynb` files) contain exploratory analysis, visualisation, and prototyping work.
+
+---
+
+## Slurm / HPC Scripts
+
+All Slurm job submission scripts are in `csf/`, targeting the University of Manchester CSF3 cluster:
+
+| Script                             | Pipeline Stage                       |
+| ---------------------------------- | ------------------------------------ |
+| `submit_classify_isic2020.sh`    | Skin tone classification (ISIC 2020) |
+| `submit_classify_skin_tone.sh`   | Skin tone classification (general)   |
+| `submit_finetune_unet.sh`        | U-Net fine-tuning on ISIC 2018       |
+| `submit_mskcc_finetune.sh`       | EfficientNet-B4 fine-tuning on MSKCC |
+| `submit_skin_augmentation.sh`    | Skin tone augmentation               |
+| `submit_diagnostics_isic2019.sh` | ISIC 2019 diagnostic training        |
+| `submit_skin_diagnostics.sh`     | HAM10000 diagnostic training         |
+| `submit_eval_isic2019_test.sh`   | ISIC 2019 test evaluation            |
+| `submit_generate_cnn_outputs.sh` | CNN output generation for VLM        |
+| `submit_teacher_generation.sh`   | VLM teacher generation               |
+| `submit_vlm_qc_format.sh`        | QC + dataset formatting              |
+| `submit_vlm_sft.sh`              | VLM supervised fine-tuning           |
+| `submit_vlm_dpo.sh`              | VLM DPO training                     |
+| `submit_vlm_evaluate.sh`         | VLM evaluation                       |
+| `submit_label_isic2018.sh`       | ISIC 2018 labelling                  |
+| `submit_label_isic2019.sh`       | ISIC 2019 labelling                  |
+| `submit_label_mskcc.sh`          | MSKCC labelling                      |
+| `submit_utkface_labels.sh`       | UTKFace labelling                    |
+| `submit_mskcc_diagnostic.sh`     | MSKCC diagnostic analysis            |
+| `submit_gui.sh`                  | GUI deployment                       |
+
+Additional Slurm scripts within `External-validation/`:
+
+| Script                                                              | Pipeline Stage                                     |
+| ------------------------------------------------------------------- | -------------------------------------------------- |
+| `Fitzpatrick17k/submit_fitzpatrick_stratified.sh`                 | Fitzpatrick17k prediction + evaluation (both arms) |
+| `MILK10K/submit_milk10k_stratified.sh`                            | MILK10K prediction + evaluation (both arms)        |
+| `ISIC2019_Internal_baseline/submit_tone_stratified_eval_novig.sh` | ISIC 2019 vignette-sensitivity evaluation          |
 
 ---
 
 ## Datasets
 
-| Dataset             | Size           | Source                                                                                            | Used for                           |
-| ------------------- | -------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| **ISIC 2019** | 25,331 images  | [ISIC Challenge](https://challenge.isic-archive.com/data/#2019)                                      | Diagnostic training + augmentation |
-| **HAM10000**  | 10,015 images  | [Harvard Dataverse](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/DBW86T) | VLM teacher generation             |
-| **FairFace**  | 108,501 images | [GitHub](https://github.com/joojs/fairface)                                                          | Skin tone classifier pre-training  |
-| **UTKFace**   | 23,705 images  | [GitHub](https://github.com/aicip/UTKFace)                                                           | Skin tone classifier pre-training  |
-| **MSKCC**     | 4,880 images   | Clinical dataset                                                                                  | Skin tone classifier fine-tuning   |
+All raw datasets are **excluded from the repository** via `.gitignore`. Download them from their respective sources:
 
-> **Note**: Datasets are not included in this repository due to size and licensing. Download from the links above and place in `datasets/`.
+| Dataset                  | Source                                                  | Used For                                            |
+| ------------------------ | ------------------------------------------------------- | --------------------------------------------------- |
+| **FairFace**       | [GitHub](https://github.com/joojs/fairface)                | Skin tone classifier training (86k faces)           |
+| **UTKFace**        | [UTKFace](https://susanqq.github.io/UTKFace/)              | Supplementary skin tone labels                      |
+| **MSKCC**          | Memorial Sloan Kettering                                | Fine-tuning + ground truth (MST-rated)              |
+| **HAM10000**       | [ISIC Archive](https://www.isic-archive.com/)              | Diagnostic model training (7 classes)               |
+| **ISIC 2019**      | [ISIC Challenge](https://challenge.isic-archive.com/data/) | Diagnostic model training (8 classes, 25k+ images)  |
+| **ISIC 2018**      | [ISIC Challenge](https://challenge.isic-archive.com/data/) | U-Net segmentation fine-tuning                      |
+| **Fitzpatrick17k** | [GitHub](https://github.com/mattgroh/fitzpatrick17k)       | External validation (FST-stratified, dual-rater)    |
+| **MILK10K**        | Harvard Dataverse                                       | External validation (6-level tone, diverse sources) |
 
 ---
 
-## Requirements
+## Installation & Requirements
 
-```
-# Core
-torch>=2.0
-torchvision
-transformers  # Install from source for 2.5-VL: pip install git+https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct
-accelerate
-bitsandbytes
-peft
-trl>=1.0
-datasets
-pandas
+### Root Environment (training & augmentation)
 
-# Image processing
-opencv-python
-Pillow
-scikit-learn
+```bash
+python -m venv venv
+source venv/bin/activate    # Linux/Mac
+# or: venv\Scripts\activate  # Windows
 
-# Visualisation
-matplotlib
-seaborn
-
-# VLM-specific
-qwen-vl-utils
-
-# GUI
-flask
-tensorflow  # For the clinical GUI backend
+pip install -r requirements.txt
 ```
 
-### Hardware
+**Key dependencies:**
 
-| Task                     | Minimum GPU        | VRAM     |
-| ------------------------ | ------------------ | -------- |
-| Skin tone classification | Any CUDA GPU       | 4 GB     |
-| Augmentation             | CPU (multicore)    | 8 GB RAM |
-| Diagnostic training      | NVIDIA GPU         | 8 GB     |
-| VLM teacher generation   | NVIDIA L40S / A100 | 24+ GB   |
-| VLM SFT/DPO training     | NVIDIA L40S / A100 | 24+ GB   |
-| GUI (inference only)     | CPU or GPU         | 4+ GB    |
+- `torch >= 2.0`
+- `torchvision`
+- `transformers >= 4.40`
+- `peft >= 0.10`
+- `accelerate`
+- `opencv-python`
+- `scikit-learn`, `pandas`, `numpy`, `matplotlib`, `seaborn`
+- `trl` (for DPO training)
+
+### GUI Environment
+
+```bash
+cd gui
+pip install -r requirements.txt
+```
+
+**Additional GUI dependencies:**
+
+- `flask`
+- `tensorflow` (for legacy model support)
+- `qwen-vl-utils`
+
+---
+
+## Hardware Requirements
+
+| Task                                 | Minimum         | Recommended     |
+| ------------------------------------ | --------------- | --------------- |
+| Skin Tone Classification (inference) | CPU             | Any GPU         |
+| Skin Tone Classifier Training        | 1× GPU (8 GB)  | 1× A100 40 GB  |
+| Augmentation Pipeline                | CPU (slow)      | GPU recommended |
+| Diagnostic Training (ISIC 2019)      | 1× GPU (12 GB) | 1× A100 40 GB  |
+| VLM Teacher Generation               | 1× GPU (24 GB) | 1× A100 80 GB  |
+| VLM SFT (QLoRA)                      | 1× GPU (24 GB) | 1× A100 40 GB  |
+| VLM DPO                              | 1× GPU (40 GB) | 1× A100 80 GB  |
+| GUI (with VLM)                       | 1× GPU (16 GB) | 1× GPU (24 GB) |
+| GUI (CNN only)                       | CPU             | Any GPU         |
 
 ---
 
 ## Reproducibility
 
-All experiments use `seed=42`. Slurm submission scripts in `csf/` are configured for the University of Manchester CSF3 cluster but can be adapted to any Slurm environment. The entire pipeline, from labeling via individual typology angle (ITA) upwards, uses static seeds and deterministic operations where possible.
+All experiments use **fixed random seeds** (default: 42). Key reproducibility notes:
 
-### Key Hyperparameters
-
-| Parameter               | Value     | Rationale                                          |
-| ----------------------- | --------- | -------------------------------------------------- |
-| λ (augmentation ratio) | 0.7 / 0.3 | Controls Reinhard vs Poisson blend proportion      |
-| QLoRA rank (r)          | 64        | Balances expressivity vs parameter count           |
-| QLoRA α                | 128       | α/r = 2.0 amplifies LoRA updates for domain shift |
-| SFT learning rate       | 2e-4      | Standard for QLoRA                                 |
-| SFT epochs              | 3         | Sufficient for ~1750 clean examples                |
-| DPO β (KL penalty)     | 0.1       | Moderate constraint on policy divergence           |
-| QC min pass score       | 3/5       | Expected 20-30% discard rate                       |
-| Image resolution (CNN)  | 300×300  | EfficientNet-B3 input size                         |
+- **Skin Tone Classification:** `train_fairface.py` sets `torch.manual_seed`, `np.random.seed`, and `random.seed`.
+- **Augmentation:** Both V1 and V2 pipelines accept `--seed` argument.
+- **Diagnostics:** `train_test_split(..., random_state=42)` ensures consistent data splits.
+- **VLM Training:** SFT and DPO scripts use fixed seeds in training arguments.
+- **Hyperparameter rationale:**
+  - Ordinal CE loss (classifier) — MST is ordered; penalising far-off errors more heavily improves calibration.
+  - λ=0.7 (augmentation V1) — 70% Reinhard chosen for speed; 30% deep blending for diversity.
+  - QLoRA rank=64, α=128 (VLM SFT) — balances parameter efficiency with expressiveness for a 7B model.
+  - β=0.1 (DPO) — standard setting following the DPO paper.
 
 ---
 
@@ -380,8 +555,6 @@ If you use this work, please cite:
 
 ---
 
-## Licence
+## License
 
-MIT Licence. See [LICENCE](LICENCE) for details.
-
-> **Medical disclaimer**: This system is for research purposes only. It does not provide medical diagnoses and should not be used as a substitute for professional medical advice.
+This project is for **academic and research purposes**. See individual dependency licences for third-party components. The VLM component (Qwen2.5-VL) is available under Apache 2.0.
