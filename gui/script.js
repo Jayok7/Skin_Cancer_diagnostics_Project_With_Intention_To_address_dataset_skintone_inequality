@@ -206,8 +206,8 @@ function displayResults(data) {
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             // 2. Find numbers followed by a dot and space (e.g., "1. ", "2. ") and add line breaks before them
             .replace(/(\s|^)(\d+\.\s)/g, '<br><br>$2')
-            // 3. Add line breaks before "Conclusion:" (whether it got bolded in step 1 or not)
-            .replace(/(<strong>Conclusion:<\/strong>|Conclusion:)/gi, '<br><br>$1');
+            // 3. Add line breaks before "Conclusion" (handles all bold/colon permutations)
+            .replace(/(<strong>Conclusion:?<\/strong>:?|Conclusion:)/gi, '<br><br>$1');
 
         // Clean up any accidental double breaks at the very beginning of the text
         formattedText = formattedText.replace(/^(<br>)+/, '');

@@ -308,7 +308,7 @@ clascdef generate_vlm_reasoning(original_b64, gradcam_b64, prediction, confidenc
 # Core
 torch>=2.0
 torchvision
-transformers  # Install from source for Qwen3-VL: pip install git+https://github.com/huggingface/transformers.git
+transformers  # Install from source for 2.5-VL: pip install git+https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct
 accelerate
 bitsandbytes
 peft
